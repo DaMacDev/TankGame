@@ -179,6 +179,34 @@ public class AiRoamingTests
     }
 
     [Fact]
+    public void ABotFighting_AcrossLava_HoldsItsGroundInsteadOfDrivingIn()
+    {
+        var materials = new CellMaterial[12, 5];
+        for (var y = 0; y < 5; y++)
+        {
+            materials[6, y] = CellMaterial.Lava;
+        }
+
+        var grid = WallGrid.FromMaterials(materials);
+        var arena = new GridArena(grid, Tile, Vector2.Zero);
+        var world = new World();
+        var prey = new Tank(new Still(), world, arena, new Vector2(8.5f * Tile, 2.5f * Tile), 200f, 0.6f, 600f, team: 0);
+        world.Spawn(prey);
+        var ai = new AiInputSource(world, arena, grid: grid, tileSize: Tile, origin: Vector2.Zero, seed: 2,
+            players: new ITank[] { prey });
+        var bot = new Tank(ai, world, arena, new Vector2(4.5f * Tile, 2.5f * Tile), 200f, 0.6f, 600f, team: 1);
+        ai.Bind(bot);
+        world.Spawn(bot);
+
+        for (var step = 0; step < 60 * 5; step++)
+        {
+            world.Step(StepSeconds);
+        }
+
+        Assert.True(bot.Hp > 0, "the bot drove into lava to reach its target");
+    }
+
+    [Fact]
     public void RoamingBots_RouteAroundLava()
     {
         // A lava band with one bridge gap: straight lines and lava-blind routes die here.

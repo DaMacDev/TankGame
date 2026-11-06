@@ -202,7 +202,9 @@ public sealed class AiInputSource : IInputSource
             var distance = Vector2.Distance(enemy.Position, _self.Position);
             if (distance <= FireRange)
             {
-                var move = distance > _personality.Standoff ? DirectionTo(enemy.Position) : Vector2.Zero;
+                var move = distance > _personality.Standoff && StraightLineIsSafe(enemy.Position)
+                    ? DirectionTo(enemy.Position)
+                    : Vector2.Zero;
                 return new TankInput(move, JitteredAim(AimAt(enemy.Position)), Fire: true);
             }
         }
@@ -360,7 +362,7 @@ public sealed class AiInputSource : IInputSource
         }
 
         var spot = _concealment.NearestConcealment(_self.Position, AmbushSeekRange);
-        return spot is null ? null : new TankInput(DirectionTo(spot.Value), aim, fire);
+        return spot is null || !StraightLineIsSafe(spot.Value) ? null : new TankInput(DirectionTo(spot.Value), aim, fire);
     }
 
     // Nothing in sight: travel with purpose. A quiet spell sends the bot straight at its nearest enemy;
@@ -454,12 +456,17 @@ public sealed class AiInputSource : IInputSource
     // Half-tile samples can't step over a whole lethal cell.
     private bool StraightLineIsSafe(Vector2 goal)
     {
+        if (_grid is null || _tileSize <= 0f)
+        {
+            return true;
+        }
+
         var from = _self!.Position;
         var samples = (int)(Vector2.Distance(from, goal) / (_tileSize / 2f));
         for (var i = 1; i <= samples; i++)
         {
             var (x, y) = ToCell(Vector2.Lerp(from, goal, i / (float)samples));
-            if (CellMaterials.IsLethal(_grid!.GetCell(x, y).Material))
+            if (CellMaterials.IsLethal(_grid.GetCell(x, y).Material))
             {
                 return false;
             }

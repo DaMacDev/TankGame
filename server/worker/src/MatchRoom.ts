@@ -170,8 +170,14 @@ export class MatchRoom implements DurableObject {
 
     // Keep this room's entry in the lobby browser in step with its joinability.
     if (this.code !== "") {
-      const directory = this.env.LOBBY_DIRECTORY.get(this.env.LOBBY_DIRECTORY.idFromName("global"));
-      await publishToDirectory(directory, this.lobby, this.code);
+      // The browser list is a convenience. A failure here must not fail the join or make the platform
+      // retry the alarm, which would run a tick or the loading timeout twice.
+      try {
+        const directory = this.env.LOBBY_DIRECTORY.get(this.env.LOBBY_DIRECTORY.idFromName("global"));
+        await publishToDirectory(directory, this.lobby, this.code);
+      } catch (error) {
+        console.error("lobby directory publish failed", error);
+      }
     }
   }
 
