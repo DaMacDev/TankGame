@@ -10,7 +10,7 @@ using NVector2 = System.Numerics.Vector2;
 namespace TankGame.Presentation;
 
 /// <summary>The 3D networked play scene (ADR-0019 step 3): the welcome's slot decides the role.
-/// The HOST (slot 0) is the authority — it runs the REAL <see cref="World"/> (the same GameLogic as
+/// The HOST (the lobby's host seat) is the authority — it runs the REAL <see cref="World"/> (the same GameLogic as
 /// single-player) with its own tank on keyboard/mouse and the guest's tank on a
 /// <see cref="RelayedInputSource"/>, and a <see cref="HostSession"/> broadcasts a snapshot per fixed
 /// 20 Hz tick. A GUEST predicts its own tank (<see cref="PredictedTank"/>), mirrors every other slot
@@ -30,7 +30,7 @@ public partial class NetArena3DScene : Node3D
     private const float CombatHitRadius = 28f;
     private const float PickupRadius = 28f;
     private const int TankMaxHp = 8;
-    private const byte HostSlot = 0;
+    private const byte DefaultHostSlot = 0; // a session with no lobby (old 2-player tests)
     private const float TeleportPadRadius = 40f; // a tank centred within this of a pad warps (as solo)
 
     private static readonly NVector2 GridOrigin = NVector2.Zero;
@@ -357,7 +357,7 @@ public partial class NetArena3DScene : Node3D
         }
     }
 
-    // The relay welcomed us: slot 0 becomes the authority, anyone else a predicting guest. Both
+    // The relay welcomed us: the host seat becomes the authority, anyone else a predicting guest. Both
     // roles derive the same roster (from the lobby's snapshotted final state) and the same spawn
     // table, so host truth and guest prediction agree from the first tick.
     private void OnWelcome(byte slot)
@@ -382,7 +382,9 @@ public partial class NetArena3DScene : Node3D
             _netStats.Register(seat.Slot, seat.Name, seat.Team); // both roles book the same rows
         }
 
-        if (slot == HostSlot)
+        // The room hands the host role on when its creator leaves, so the seat decides the authority:
+        // the relay routes every guest's input to lobby.HostSlot and nobody else would simulate.
+        if (slot == (NetworkSession.StartedLobby?.HostSlot ?? DefaultHostSlot))
         {
             BecomeHost();
         }

@@ -154,6 +154,20 @@ describe("lobby state reducer", () => {
     expect(state.players.every((p) => !p.loaded)).toBe(true);
   });
 
+  it("starts anyway when the loading timeout fires, so one stuck player cannot hold everyone", () => {
+    let state = reduce(emptyLobby(), { type: "join", slot: 0, name: "Ada" });
+    state = reduce(state, { type: "start", slot: 0 });
+    for (let i = 0; i < 3; i++) state = reduce(state, { type: "tick" });
+    expect(state.phase).toBe("loading");
+
+    expect(reduce(state, { type: "loadingTimeout" }).phase).toBe("started");
+  });
+
+  it("ignores a late loading timeout once the room has moved on", () => {
+    const waiting = reduce(emptyLobby(), { type: "join", slot: 0, name: "Ada" });
+    expect(reduce(waiting, { type: "loadingTimeout" }).phase).toBe("waiting");
+  });
+
   it("starts only once EVERY seated player reports loaded", () => {
     let state = run(joinN(2), { type: "setReady", slot: 1, ready: true }, { type: "start", slot: 0 });
     for (let i = 0; i < COUNTDOWN_SECONDS; i++) state = reduce(state, { type: "tick" });

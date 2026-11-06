@@ -25,6 +25,12 @@ public sealed class GodotWebSocket : IMatchSocket
 
     public void Send(byte[] data) => _peer.PutPacket(data);
 
+    public void Close()
+    {
+        _peer.Close();
+        _peer.Poll(); // nothing pumps this peer after a close; flush the close frame now
+    }
+
     public IReadOnlyList<byte[]> Poll()
     {
         _peer.Poll();

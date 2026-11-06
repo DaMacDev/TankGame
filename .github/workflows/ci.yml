@@ -84,6 +84,40 @@ jobs:
       - name: Run GoDotTest scene tests
         run: godot --headless --path client --run-tests --quit-on-finish
 
+  # Real sockets, real scenes: a local worker plus three headless game processes create, join and
+  # start a match. Fake-transport tests could not see the bug that left every online match stalled.
+  net-e2e:
+    needs: changes
+    if: needs.changes.outputs.client == 'true' || needs.changes.outputs.worker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.6.2
+          use-dotnet: true
+          include-templates: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: server/worker/pnpm-lock.yaml
+      - name: Install worker
+        run: pnpm install --frozen-lockfile
+        working-directory: server/worker
+      - name: Build client
+        run: dotnet build client/TankGame.csproj -c Debug
+      - name: Import resources
+        run: godot --headless --path client --import
+      - name: Run three players through a real match
+        run: node scripts/net-e2e.mjs 3
+
   worker-test:
     needs: changes
     if: needs.changes.outputs.worker == 'true'

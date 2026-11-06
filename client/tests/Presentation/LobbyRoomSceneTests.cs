@@ -24,6 +24,8 @@ public class LobbyRoomSceneTests : TestClass
         public void SendInput(InputFrame input) { }
         public void Poll() { }
         public void SendLobby(byte[] command) => SentLobby.Add(command);
+        public bool Closed { get; private set; }
+        public void Close() => Closed = true;
 
         public void RaiseWelcome(byte slot) => WelcomeReceived?.Invoke(slot);
         public void RaiseLobby(LobbyView view) => LobbyStateReceived?.Invoke(view);
@@ -53,9 +55,42 @@ public class LobbyRoomSceneTests : TestClass
     [Cleanup]
     public void Cleanup()
     {
-        _scene.QueueFree();
+        if (GodotObject.IsInstanceValid(_scene))
+        {
+            _scene.QueueFree();
+        }
+
         NetworkSession.TransportFactory = _originalTransportFactory;
         NetworkSession.Reset();
+    }
+
+    // The real-phone stall: the socket outlives the room, so the next push after the hand-off ran the
+    // freed room's handler. Its throw stopped the arena from hearing "started", so no match ever ran.
+    [Test]
+    public void AFreedRoom_DoesNotReactToPushesOnTheSocketItHandedOff()
+    {
+        Seat(slot: 0, View(LobbyPhase.Loading, hostSlot: 0, new LobbyPlayer(0, "Ada", 0, false)));
+        _scene.Free();
+        var arenaHeard = false;
+        _transport.LobbyStateReceived += _ => arenaHeard = true;
+
+        _transport.RaiseLobby(View(LobbyPhase.Started, hostSlot: 0, new LobbyPlayer(0, "Ada", 0, false)));
+
+        if (!arenaHeard)
+        {
+            throw new Exception("The arena must hear \"started\" after the room is gone.");
+        }
+    }
+
+    [Test]
+    public void Leaving_ClosesTheSocket_SoTheSeatIsFreed()
+    {
+        NetworkSession.Reset();
+
+        if (!_transport.Closed)
+        {
+            throw new Exception("Dropping the session must close its socket, or the seat blocks everyone else.");
+        }
     }
 
     [Test]

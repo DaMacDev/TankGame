@@ -58,4 +58,10 @@ public interface IMatchTransport
     void SendLobby(byte[] command)
     {
     }
+
+    /// <summary>Closes the connection so the server frees this client's seat at once. A seat left
+    /// behind would block every other player's Start and loading handshake.</summary>
+    void Close()
+    {
+    }
 }

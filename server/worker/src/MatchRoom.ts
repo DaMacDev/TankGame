@@ -21,6 +21,7 @@ import {
   emptyLobby,
   reduce,
   MAX_PLAYERS,
+  LOADING_TIMEOUT_SECONDS,
   type LobbyState,
   type LobbyCommand,
 } from "./lobbyState";
@@ -129,12 +130,13 @@ export class MatchRoom implements DurableObject {
   // The DO alarm drives the start countdown one second at a time, so every client ticks in lockstep
   // from the broadcast state. It reschedules itself until the countdown reaches "started".
   async alarm(): Promise<void> {
-    await this.apply({ type: "tick" });
+    await this.apply(this.lobby.phase === "loading" ? { type: "loadingTimeout" } : { type: "tick" });
   }
 
   // Run one command through the pure reducer, persist, push the new state to all members, and keep
   // the countdown alarm scheduled exactly while the lobby is counting down.
   private async apply(command: LobbyCommand): Promise<void> {
+    const previousPhase = this.lobby.phase;
     this.lobby = reduce(this.lobby, command);
     await this.state.storage.put(LOBBY_KEY, this.lobby);
     this.broadcast();
@@ -147,6 +149,8 @@ export class MatchRoom implements DurableObject {
 
     if (this.lobby.phase === "countdown") {
       await this.state.storage.setAlarm(Date.now() + TICK_MS);
+    } else if (this.lobby.phase === "loading" && previousPhase !== "loading") {
+      await this.state.storage.setAlarm(Date.now() + LOADING_TIMEOUT_SECONDS * 1000);
     }
   }
 

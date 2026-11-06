@@ -27,6 +27,12 @@ public partial class Bootstrap : Node
             Callable.From(RunTests).CallDeferred();
             return;
         }
+
+        if (TankGame.Tests.Presentation.NetE2EDriver.TryStart(GetTree()))
+        {
+            TranslationLoader.EnsureLoaded();
+            return;
+        }
 #endif
         // App init happens once here (the composition root), then the play scene loads.
 #if !GODOT_WEB

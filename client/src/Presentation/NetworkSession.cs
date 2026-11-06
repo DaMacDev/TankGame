@@ -59,10 +59,11 @@ public static class NetworkSession
         return Active = TransportFactory(code);
     }
 
-    /// <summary>Drops the active transport and every per-match leftover — leaving a match, or a
+    /// <summary>Closes and drops the active transport and every per-match leftover — leaving a match, or a
     /// test resetting the seam.</summary>
     public static void Reset()
     {
+        Active?.Close();
         Active = null;
         ActiveCode = "";
         PendingMode = null;

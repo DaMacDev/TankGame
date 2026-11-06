@@ -24,6 +24,8 @@ public sealed class WebSocketTransport : IMatchTransport
 
     public void SendLobby(byte[] command) => _socket.Send(command);
 
+    public void Close() => _socket.Close();
+
     public void SendSnapshot(SnapshotFrame snapshot)
     {
         var payload = ProtocolCodec.EncodeSnapshot(snapshot);

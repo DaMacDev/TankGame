@@ -146,6 +146,10 @@ public partial class LobbyRoomScene : Control
 
     public override void _Process(double delta) => _transport?.Poll();
 
+    // The socket outlives this scene: left subscribed, the next lobby push runs OnLobbyChanged on a
+    // freed node, and that throw also stops the arena from ever hearing "started".
+    public override void _ExitTree() => _controller?.Dispose();
+
     private void OnLobbyChanged()
     {
         // First seating: tell the room our battle name, and — if we created it — apply the mode and

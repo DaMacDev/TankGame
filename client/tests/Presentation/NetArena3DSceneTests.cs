@@ -70,6 +70,32 @@ public class NetArena3DSceneTests : TestClass
         System.GC.Collect();
     }
 
+    // The relay routes guest input to the lobby's host seat. If that seat is not slot 0 (the creator
+    // left and the role moved on), it must still run the authority, or no client simulates anything.
+    [Test]
+    public void TheLobbyHostSeat_RunsTheMatch_EvenWhenItIsNotSlotZero()
+    {
+        NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
+            new List<LobbyPlayer> { new(1, "Bea", 1, true, true), new(2, "Cid", 2, true, true) });
+        NetworkSession.LocalSlot = 1;
+        var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
+            .Instantiate<NetArena3DScene>();
+        TestScene.AddChild(scene);
+
+        try
+        {
+            scene.Tick(0.05f);
+            if (_transport.Broadcast.Count == 0)
+            {
+                throw new Exception("The host seat must broadcast snapshots whichever slot it sits in.");
+            }
+        }
+        finally
+        {
+            scene.Free();
+        }
+    }
+
     [Test]
     public void GuestWelcome_AdoptsTheSlot_AndShowsItsOwnTank()
     {
@@ -349,6 +375,20 @@ public class NetArena3DSceneTests : TestClass
         }
     }
 
+    // The authority decides a round from its own world: every tank but the survivor falls.
+    private static void DecideRoundFor(NetArena3DScene scene, byte survivor)
+    {
+        foreach (var (slot, tank) in scene.Tanks)
+        {
+            if (slot != survivor)
+            {
+                tank.TakeDamage(tank.Hp + tank.Shield);
+            }
+        }
+
+        scene.Tick(0.06f);
+    }
+
     // Online rematch: once the round is decided, the LOBBY host (and only the host) gets a Rematch
     // button beside Leave; pressing it sends the rematch lobby command over the same socket.
     [Test]
@@ -356,7 +396,7 @@ public class NetArena3DSceneTests : TestClass
     {
         NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
             new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true) });
-        NetworkSession.LocalSlot = 1; // this client is the lobby host (slot 1), playing as a guest
+        NetworkSession.LocalSlot = 1; // this client sits in the lobby's host seat, so it runs the match
         var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
             .Instantiate<NetArena3DScene>();
         TestScene.AddChild(scene);
@@ -370,10 +410,7 @@ public class NetArena3DSceneTests : TestClass
                 throw new Exception("Rematch must stay hidden while the round is being fought.");
             }
 
-            // Bea (slot 1) falls — the round is decided.
-            _transport.DeliverSnapshot(new SnapshotFrame(1, 0,
-                new List<TankState> { new(0, 96f, 160f, 0f, 0f, 8, 0), new(1, 200f, 96f, 0f, 0f, 0, 1) },
-                new List<WallDelta>()));
+            DecideRoundFor(scene, survivor: 1);
 
             if (!rematch.Visible)
             {
@@ -520,7 +557,7 @@ public class NetArena3DSceneTests : TestClass
     {
         NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
             new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true) });
-        NetworkSession.LocalSlot = 1; // this client is the lobby host (slot 1), playing as a guest
+        NetworkSession.LocalSlot = 1; // this client sits in the lobby's host seat, so it runs the match
         var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
             .Instantiate<NetArena3DScene>();
         TestScene.AddChild(scene);
@@ -528,13 +565,11 @@ public class NetArena3DSceneTests : TestClass
         try
         {
             // Bea (slot 1) falls — the round is decided.
-            _transport.DeliverSnapshot(new SnapshotFrame(1, 0,
-                new List<TankState> { new(0, 96f, 160f, 0f, 0f, 8, 0), new(1, 200f, 96f, 0f, 0f, 0, 1) },
-                new List<WallDelta>()));
+            DecideRoundFor(scene, survivor: 1);
 
             var winner = scene.FindChild("WinnerName", recursive: true, owned: false) as Label
                 ?? throw new Exception("The victory screen must show on the lobby host.");
-            if (winner.Text != "Ada")
+            if (winner.Text != "Bea")
             {
                 throw new Exception($"The ribbon must carry the roster name of the survivor; got '{winner.Text}'.");
             }
