@@ -274,6 +274,7 @@ public partial class NetArena3DScene : Node3D
         _leaveLayer = layer;
         var leave = new Button { Name = "LeaveButton", Text = "net.leave" };
         leave.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight);
+        leave.GrowHorizontal = Control.GrowDirection.Begin; // or it runs off the right edge of the screen
         leave.Position += new Vector2(-16f, 16f);
         leave.CustomMinimumSize = new Vector2(112f, 64f); // a comfortable thumb target
         leave.Pressed += LeaveMatch;
@@ -283,6 +284,7 @@ public partial class NetArena3DScene : Node3D
         // pressing it asks the server to reset the room to "waiting" (the server enforces host-only).
         _rematch = new Button { Name = "RematchButton", Text = "net.rematch", Visible = false };
         _rematch.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight);
+        _rematch.GrowHorizontal = Control.GrowDirection.Begin;
         _rematch.Position += new Vector2(-16f, 96f); // stacked under Leave
         _rematch.CustomMinimumSize = new Vector2(112f, 64f);
         _rematch.Pressed += () => _transport.SendLobby(LobbyProtocol.EncodeRematch());

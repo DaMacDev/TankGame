@@ -39,6 +39,7 @@ public partial class NetE2EDriver : Node
     private bool _finished;
     private int _driveKey = -1;
     private bool _ownViewSeen;
+    private bool _arrowShot;
     private string? _createdCode;
 
     private NetE2EDriver(string role, string worker, string codeFile, string outFile, int humans, string? shotPrefix, string? map)
@@ -223,19 +224,25 @@ public partial class NetE2EDriver : Node
             _ownViewSeen |= arena.FindChild($"Tank3DView{own}", true, false) is Node3D { Visible: true };
         }
 
+        if (!_arrowShot && arena.FindChild("EnemyArrow0", true, false) is Node2D { Visible: true })
+        {
+            _arrowShot = true;
+            SaveScreenshot("arrow");
+        }
+
         if (_playing >= PlaySeconds)
         {
-            SaveScreenshot();
+            SaveScreenshot("end");
             Judge(arena);
         }
     }
 
     // Windowed runs only (a headless viewport has no pixels): lets a person look at the real HUD.
-    private void SaveScreenshot()
+    private void SaveScreenshot(string moment)
     {
         if (_shotPrefix is not null)
         {
-            GetViewport().GetTexture().GetImage().SavePng($"{_shotPrefix}-{_role}.png");
+            GetViewport().GetTexture().GetImage().SavePng($"{_shotPrefix}-{moment}.png");
         }
     }
 

@@ -455,6 +455,7 @@ public partial class Arena3DScene : Node3D
         var layer = new CanvasLayer { Name = "TouchPauseLayer", Layer = 3 };
         var pause = new Button { Name = "TouchPause", Text = "pause.open" };
         pause.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight);
+        pause.GrowHorizontal = Control.GrowDirection.Begin; // or it runs off the right edge of the screen
         pause.Position += new Vector2(-16f, 16f);
         pause.CustomMinimumSize = new Vector2(112f, 64f); // a comfortable thumb target
         pause.Pressed += () => { _sfx.PlayUi(SfxKind.UiClick); if (!_paused) TogglePause(); };

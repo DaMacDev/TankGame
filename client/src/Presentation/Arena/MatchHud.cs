@@ -49,6 +49,7 @@ public partial class MatchHud : CanvasLayer
             {
                 Name = $"EnemyArrow{i}",
                 Visible = false,
+                PhysicsInterpolationMode = PhysicsInterpolationModeEnum.Off, // moved every frame from _Process; would slide in from the corner
                 Color = i == 0 ? NearestArrow : FartherArrow,
                 Polygon = new[]
                 {
