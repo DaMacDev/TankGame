@@ -721,7 +721,8 @@ public partial class Arena3DScene : Node3D
     private void SpawnTanks()
     {
         // Every match deals its spawn markers randomly (issue #4): the player and every AI draw a
-        // distinct cell from the combined marker pool, and each respawn re-rolls from the same pool.
+        // distinct cell from the combined marker pool. A respawn is not tied to the markers: it lands
+        // on any allowed cell away from every live tank (RespawnPlacer).
         // Seeded by the arena so a best-of-N series is reproducible. (Procedural Desert already varies
         // by seed; shuffling its distinct spawns too is harmless and keeps every map consistent.)
         var playerCell = _playerSpawn;
@@ -739,11 +740,8 @@ public partial class Arena3DScene : Node3D
 
             playerCell = pool[0];
             enemyCells = pool.Skip(1).ToList();
-            respawnPoint = () =>
-            {
-                var cell = pool[rng.Next(pool.Count)];
-                return CellCentre(cell.X, cell.Y);
-            };
+            var placer = new RespawnPlacer(_grid, TileSize, GridOrigin, pool, rng, reserved: OnTeleportPad);
+            respawnPoint = () => placer.Pick(_world.Entities);
         }
 
         var p1Input = BuildPlayerInput();
@@ -780,6 +778,19 @@ public partial class Arena3DScene : Node3D
         }
 
         SetUpFog(); // single-player → fog the field with a lit circle around the player
+    }
+
+    private bool OnTeleportPad(NVector2 point)
+    {
+        foreach (var pad in _teleporter.PadStatuses())
+        {
+            if (NVector2.Distance(pad.Position, point) <= TeleportPadRadius + Tank.CollisionRadius)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Place one linked pair of teleport pads on the two best-separated floor cells (near opposite quarters),

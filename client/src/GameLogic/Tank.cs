@@ -408,14 +408,22 @@ public sealed class Tank : ITank
     // A tank is a circle of CollisionRadius; two tanks may not overlap. Scans the world for any
     // other live tank whose centre is within a tank-diameter of this candidate centre. Order is
     // tick-order-dependent (the tank that steps first claims the ground), which is fine for a
-    // body block — no momentum is transferred, the mover simply stops.
+    // body block — no momentum is transferred, the mover simply stops. Tanks already overlapping (a
+    // teleport landing, say) may still move in any direction that separates them; without that, every
+    // candidate overlaps and both are pinned for good.
     private bool OverlapsAnotherTank(Vector2 candidateCentre)
     {
         var minDistance = CollisionRadius * 2f;
         foreach (var entity in _world.Entities)
         {
-            if (entity is ITank other && !ReferenceEquals(other, this) && other.Hp > 0 &&
-                Vector2.DistanceSquared(candidateCentre, other.Position) < minDistance * minDistance)
+            if (entity is not ITank other || ReferenceEquals(other, this) || other.Hp <= 0)
+            {
+                continue;
+            }
+
+            var candidateGap = Vector2.DistanceSquared(candidateCentre, other.Position);
+            if (candidateGap < minDistance * minDistance
+                && candidateGap <= Vector2.DistanceSquared(Position, other.Position))
             {
                 return true;
             }
