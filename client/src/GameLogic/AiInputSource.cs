@@ -81,6 +81,7 @@ public sealed class AiInputSource : IInputSource
     private readonly int? _seed;
     private readonly DifficultyPreset _preset;
     private readonly IReadOnlyList<ITank>? _players;
+    private readonly bool _respectTeams;
     private readonly int _quietTicksLimit;
     private readonly int _repathTicks;
     private readonly int _roamGiveUpTicks;
@@ -121,6 +122,8 @@ public sealed class AiInputSource : IInputSource
     /// <param name="players">The human players' tanks: a roaming bot is drawn to their area, and while
     /// one lives the bot only fights other bots when shot at. May still be filling up when passed. Null:
     /// every other tank is equally a target.</param>
+    /// <param name="respectTeams">True in Team mode: tanks on this bot's team are never targets. False
+    /// where bots share a team yet fight each other (solo) or every tank has its own team (FFA).</param>
     /// <param name="ticksPerSecond">How often <see cref="Read"/> is called, so the time-based roaming
     /// rules hold at both the solo (60 Hz) and networked (20 Hz) tick.</param>
     public AiInputSource(
@@ -135,6 +138,7 @@ public sealed class AiInputSource : IInputSource
         int? seed = null,
         Difficulty difficulty = Difficulty.Normal,
         IReadOnlyList<ITank>? players = null,
+        bool respectTeams = false,
         float ticksPerSecond = 60f)
     {
         _world = world;
@@ -148,6 +152,7 @@ public sealed class AiInputSource : IInputSource
         _seed = seed;
         _preset = DifficultyPreset.For(difficulty);
         _players = players;
+        _respectTeams = respectTeams;
         _quietTicksLimit = (int)(EnemyCompass.QuietSeconds * ticksPerSecond);
         _repathTicks = (int)(RepathSeconds * ticksPerSecond);
         _roamGiveUpTicks = (int)(RoamGiveUpSeconds * ticksPerSecond);
@@ -316,7 +321,7 @@ public sealed class AiInputSource : IInputSource
         var path = GridPathfinder.FindPath(_grid, start, goalCell);
         if (path.Count < 2)
         {
-            return DirectionTo(goal);
+            return StraightLineIsSafe(goal) ? DirectionTo(goal) : Vector2.Zero;
         }
 
         return DirectionTo(CellCentre(path[1]));
@@ -374,6 +379,14 @@ public sealed class AiInputSource : IInputSource
         var repathDue = _repathCountdown <= 0;
         var stuck = repathDue && Vector2.Distance(_self!.Position, _progressMark) < _tileSize / 2f;
 
+        // No progress means the quarry is out of reach (up on a plateau, across water) or the way is
+        // jammed: forget it for one more quiet spell and go exploring instead of pressing the obstacle.
+        if (quarry is not null && stuck)
+        {
+            quarry = null;
+            _quietTicks = 0;
+        }
+
         if (quarry is not null)
         {
             if (repathDue || _roamGoal is null)
@@ -412,8 +425,16 @@ public sealed class AiInputSource : IInputSource
 
     private TankInput FollowRoute()
     {
-        // No route (the goal is walled in by bricks): drive straight, since pushing breaks bricks.
+        // No route (the goal is walled in by bricks): drive straight, since pushing breaks bricks, unless
+        // that line crosses lava. Then drop the goal; the next tick picks a new one.
         var next = _roamGoal!.Value;
+        if (_route.Count == 0 && !StraightLineIsSafe(next))
+        {
+            _roamGoal = null;
+            _quietTicks = 0;
+            return Hold();
+        }
+
         while (_routeIndex < _route.Count)
         {
             var waypoint = CellCentre(_route[_routeIndex]);
@@ -428,6 +449,23 @@ public sealed class AiInputSource : IInputSource
 
         var delta = next - _self!.Position;
         return new TankInput(DirectionTo(next), MathF.Atan2(delta.Y, delta.X), Fire: false);
+    }
+
+    // Half-tile samples can't step over a whole lethal cell.
+    private bool StraightLineIsSafe(Vector2 goal)
+    {
+        var from = _self!.Position;
+        var samples = (int)(Vector2.Distance(from, goal) / (_tileSize / 2f));
+        for (var i = 1; i <= samples; i++)
+        {
+            var (x, y) = ToCell(Vector2.Lerp(from, goal, i / (float)samples));
+            if (CellMaterials.IsLethal(_grid!.GetCell(x, y).Material))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private Vector2 PickRoamGoal()
@@ -478,6 +516,8 @@ public sealed class AiInputSource : IInputSource
     // While a player is alive, bots save their fire for players: in measured matches bots that dueled
     // whichever bot they met next used up all their lives across the map from the player, who met nobody.
     // Getting shot still gets an answer, whoever fired.
+    private bool IsAlly(ITank tank) => _respectTeams && tank.Team == _self!.Team;
+
     private bool IgnoresRival(ITank tank)
     {
         if (_players is null || _ticksSinceHurt <= _retaliateTicks)
@@ -493,7 +533,7 @@ public sealed class AiInputSource : IInputSource
                 return false;
             }
 
-            anyPlayerAlive |= _players[i].Hp > 0;
+            anyPlayerAlive |= _players[i].Hp > 0 && !IsAlly(_players[i]);
         }
 
         return anyPlayerAlive;
@@ -506,7 +546,8 @@ public sealed class AiInputSource : IInputSource
         {
             for (var i = 0; i < _players.Count; i++)
             {
-                if (_players[i].Hp > 0 && !ReferenceEquals(_players[i], _self) && IsCloser(_players[i], nearest))
+                if (_players[i].Hp > 0 && !ReferenceEquals(_players[i], _self) && !IsAlly(_players[i])
+                    && IsCloser(_players[i], nearest))
                 {
                     nearest = _players[i];
                 }
@@ -522,7 +563,7 @@ public sealed class AiInputSource : IInputSource
         ITank? nearest = null;
         foreach (var entity in _world.Entities)
         {
-            if (entity is ITank { Hp: > 0 } tank && !ReferenceEquals(tank, _self) && IsCloser(tank, nearest))
+            if (entity is ITank { Hp: > 0 } tank && !ReferenceEquals(tank, _self) && !IsAlly(tank) && IsCloser(tank, nearest))
             {
                 nearest = tank;
             }
@@ -599,7 +640,7 @@ public sealed class AiInputSource : IInputSource
         var found = new List<ITank>();
         foreach (var entity in _world.Entities)
         {
-            if (entity is not ITank tank || tank.Hp <= 0 || tank.Id == _self!.Id || IgnoresRival(tank))
+            if (entity is not ITank tank || tank.Hp <= 0 || tank.Id == _self!.Id || IsAlly(tank) || IgnoresRival(tank))
             {
                 continue;
             }

@@ -122,6 +122,63 @@ public class AiRoamingTests
     }
 
     [Fact]
+    public void AnUnreachableGoal_NeverSendsABotStraightOverLava()
+    {
+        // The player sits inside a brick ring (no route), behind solid lava: a straight line is fatal.
+        var materials = new CellMaterial[30, 7];
+        for (var y = 0; y < 7; y++)
+        {
+            materials[12, y] = CellMaterial.Lava;
+        }
+
+        for (var x = 19; x <= 21; x++)
+        {
+            materials[x, 2] = CellMaterial.Brick;
+            materials[x, 4] = CellMaterial.Brick;
+        }
+
+        materials[19, 3] = CellMaterial.Brick;
+        materials[21, 3] = CellMaterial.Brick;
+        var grid = WallGrid.FromMaterials(materials);
+        var arena = new GridArena(grid, Tile, Vector2.Zero);
+        var world = new World();
+        var prey = new Tank(new Still(), world, arena, new Vector2(20.5f * Tile, 3.5f * Tile), 200f, 0.6f, 600f, team: 0);
+        world.Spawn(prey);
+        var ai = new AiInputSource(world, arena, grid: grid, tileSize: Tile, origin: Vector2.Zero, seed: 3,
+            players: new ITank[] { prey });
+        var bot = new Tank(ai, world, arena, new Vector2(96f, 3.5f * Tile), 200f, 0.6f, 600f, team: 1);
+        ai.Bind(bot);
+        world.Spawn(bot);
+
+        for (var step = 0; step < 60 * 40; step++)
+        {
+            world.Step(StepSeconds);
+        }
+
+        Assert.True(bot.Hp > 0, "the bot drove into lava");
+    }
+
+    [Fact]
+    public void InTeamMode_ABotLeavesItsHumanAllyAlone_AndFightsTheOtherSide()
+    {
+        var world = new World();
+        var arena = new GridArena(WallGrid.FromMaterials(new CellMaterial[20, 20]), Tile, Vector2.Zero);
+        var ally = new Tank(new Still(), world, arena, new Vector2(400f, 300f), 200f, 0.6f, 600f, team: 0);
+        var foe = new Tank(new Still(), world, arena, new Vector2(100f, 300f), 200f, 0.6f, 600f, team: 1);
+        world.Spawn(ally);
+        world.Spawn(foe);
+        var ai = new AiInputSource(world, arena, seed: 1, players: new ITank[] { ally }, respectTeams: true);
+        var bot = new Tank(ai, world, arena, new Vector2(300f, 300f), 200f, 0.6f, 600f, team: 0);
+        ai.Bind(bot);
+        world.Spawn(bot);
+
+        var intent = ai.Read();
+
+        Assert.True(intent.Fire, "the enemy bot in range must draw fire: the only human is an ally");
+        Assert.True(MathF.Abs(MathF.Abs(intent.Aim) - MathF.PI) < 0.01f, "aimed at the foe, not the ally");
+    }
+
+    [Fact]
     public void RoamingBots_RouteAroundLava()
     {
         // A lava band with one bridge gap: straight lines and lava-blind routes die here.

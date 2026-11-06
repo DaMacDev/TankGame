@@ -58,6 +58,7 @@ public partial class NetArena3DScene : Node3D
     private Teleporter _teleporter = null!;
     private readonly List<TeleportPad3DView> _padViews = new();
     private IReadOnlyList<TeleportPadLink> _authoredPads = System.Array.Empty<TeleportPadLink>();
+    private readonly List<(int X, int Y)> _spawnAnchors = new(); // cells the map's own layout starts tanks on
     private float _accumulator;
     private byte? _localSlot;
     private int _matchSeed; // the lobby's match seed: drives spawn placement and per-bot AI seeding
@@ -66,6 +67,7 @@ public partial class NetArena3DScene : Node3D
     // arena is built and then hold — no ticks, no snapshots — until the server flips to "started"
     // (every seated player loaded). A session with no lobby (old 2-player tests) plays immediately.
     private bool _awaitingStart;
+    private bool _returningToRoom;
 
     // The seating plan from the lobby's final roster (placeholder-named AI on empty seats), the
     // seeded spawn table both roles derive identically, and the host's authoritative round state.
@@ -152,6 +154,8 @@ public partial class NetArena3DScene : Node3D
                     _level = cliffs.Map;
                     sandbags = cliffs.Sandbags;
                     _authoredPads = cliffs.Pads; // the cross-layer valley↔plateau pair (teleport pads T3)
+                    _spawnAnchors.Add(cliffs.PlayerSpawn);
+                    _spawnAnchors.AddRange(cliffs.EnemySpawns);
                     break;
                 case NetMapPick.BuiltIn builtIn when ArenaBuilders.TryGet(builtIn.ArenaId, out var builder):
                     // A themed code arena (Forest/Volcano/City/…): every member builds the identical layout
@@ -161,6 +165,8 @@ public partial class NetArena3DScene : Node3D
                     _level = themed.Map;
                     sandbags = themed.Sandbags;
                     _authoredPads = themed.Pads; // themed arenas may author pad pairs too
+                    _spawnAnchors.Add(themed.PlayerSpawn);
+                    _spawnAnchors.AddRange(themed.EnemySpawns);
                     break;
                 default:
                     // Desert War (and the safe fallback for any unrecognised pick): a seeded generation.
@@ -171,6 +177,8 @@ public partial class NetArena3DScene : Node3D
                         new ArenaGenParams(dim, dim, seed, EnemyCount: 0, PickupCount: 0));
                     _level = layout.Map;
                     sandbags = layout.Sandbags;
+                    _spawnAnchors.Add(layout.PlayerSpawn);
+                    _spawnAnchors.AddRange(layout.EnemySpawns);
                     break;
             }
         }
@@ -248,6 +256,7 @@ public partial class NetArena3DScene : Node3D
         _transport.SnapshotReceived -= OnSnapshot;
         _transport.LobbyStateReceived -= OnLobbyState;
         NetworkSession.StartedLobby = view;
+        _returningToRoom = true;
         if (GetTree().CurrentScene == this)
         {
             GetTree().ChangeSceneToFile(LobbyBrowserScene.RoomScenePath);
@@ -317,6 +326,12 @@ public partial class NetArena3DScene : Node3D
     public void Tick(float delta)
     {
         _transport.Poll();
+
+        // A rematch push swaps the scene from inside Poll; this one is on its way out.
+        if (_returningToRoom)
+        {
+            return;
+        }
 
         if (_localSlot is null || _awaitingStart)
         {
@@ -389,11 +404,18 @@ public partial class NetArena3DScene : Node3D
             NetworkSession.StartedLobby, slot, NetworkSession.ActiveCode, LobbyProtocol.MaxPlayers);
         // Seeded random placement, min-distance separated: every peer derives the same spawn list from
         // the shared match seed, so host truth and guest prediction agree — and the seed varies the
-        // cells each match (issue #4). Lava is drivable (IsBlocked false) yet lethal, so spawn
-        // eligibility excludes it explicitly; water already blocks movement.
+        // cells each match (issue #4). Same footing rules as a respawn: tanks start on the ground layer,
+        // so a raised cell would bury one inside the plateau, where it can't be seen or moved.
         _matchSeed = NetworkSession.StartedLobby?.Seed ?? 0;
+        if (_spawnAnchors.Count == 0)
+        {
+            _spawnAnchors.Add(FirstOpenCell()); // the classic battlefield names no spawns of its own
+        }
+
+        var allowed = new HashSet<(int X, int Y)>(new RespawnPlacer(_grid, TileSize, GridOrigin, _spawnAnchors,
+            new System.Random(_matchSeed), reserved: OnTeleportPad).AllowedCells());
         _spawns = SpawnTable.For(_level.Width, _level.Height, SpawnTable.MaxSpawns, _matchSeed,
-            (x, y) => _arena.IsBlocked(CellCentre(x, y)) || CellMaterials.IsLethal(_grid.GetCell(x, y).Material));
+            (x, y) => !allowed.Contains((x, y)));
         foreach (var seat in _roster)
         {
             _netStats.Register(seat.Slot, seat.Name, seat.Team); // both roles book the same rows
@@ -411,6 +433,35 @@ public partial class NetArena3DScene : Node3D
         }
 
         _status.SetStatus(_awaitingStart ? NetStatusOverlay.LoadingKey : NetStatusOverlay.ConnectedKey);
+    }
+
+    private (int X, int Y) FirstOpenCell()
+    {
+        for (var y = 0; y < _grid.Height; y++)
+        {
+            for (var x = 0; x < _grid.Width; x++)
+            {
+                if (!_grid.IsBlocked(x, y) && _grid.LayerAt(x, y) == 0)
+                {
+                    return (x, y);
+                }
+            }
+        }
+
+        return (0, 0);
+    }
+
+    private bool OnTeleportPad(NVector2 point)
+    {
+        foreach (var pad in _teleporter.PadStatuses())
+        {
+            if (NVector2.Distance(pad.Position, point) <= TeleportPadRadius + Tank.CollisionRadius)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void BecomeHost()
@@ -438,7 +489,8 @@ public partial class NetArena3DScene : Node3D
                 // Host's persisted difficulty governs net bots (guests mirror host snapshots anyway).
                 _ => ai = new AiInputSource(_world, _arena, grid: _grid, tileSize: TileSize, origin: GridOrigin,
                     seed: _matchSeed ^ seat.Slot, difficulty: GameSetup.BotDifficulty,
-                    players: humans, ticksPerSecond: 1f / TickSeconds),
+                    players: humans, respectTeams: NetworkSession.StartedLobby?.Mode == TankGame.Domain.Net.GameMode.Team,
+                    ticksPerSecond: 1f / TickSeconds),
             };
 
             var spawn = _spawns[seat.Slot % _spawns.Count];
@@ -755,6 +807,7 @@ public partial class NetArena3DScene : Node3D
         tank.Hp = _predicted.Hp;
         tank.Team = _predicted.Team;
         tank.Layer = _predicted.Layer; // a cross-layer teleport must lift the guest's own tank too
+        tank.Shield = _predicted.Shield;
         _tankViews[slot].ApplyTeamTint(tank.Team);
     }
 

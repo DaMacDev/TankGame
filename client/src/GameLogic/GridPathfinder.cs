@@ -54,7 +54,7 @@ public static class GridPathfinder
             foreach (var (dx, dy) in Neighbours)
             {
                 var next = (X: current.X + dx, Y: current.Y + dy);
-                if (!Passable(grid, next.X, next.Y))
+                if (!Passable(grid, next.X, next.Y) || !LayersConnect(grid, current, next))
                 {
                     continue;
                 }
@@ -76,9 +76,12 @@ public static class GridPathfinder
 
     private static bool Passable(IWallGrid grid, int x, int y)
     {
-        var material = grid.GetCell(x, y).Material;
-        return !CellMaterials.BlocksMovement(material) && !CellMaterials.IsLethal(material);
+        return !grid.IsBlocked(x, y) && !CellMaterials.IsLethal(grid.GetCell(x, y).Material);
     }
+
+    // A cliff face is a wall to a tank on the ground: only a ramp joins two different layers.
+    private static bool LayersConnect(IWallGrid grid, (int X, int Y) a, (int X, int Y) b) =>
+        grid.LayerAt(a.X, a.Y) == grid.LayerAt(b.X, b.Y) || grid.IsRamp(a.X, a.Y) || grid.IsRamp(b.X, b.Y);
 
     // Manhattan distance — admissible for 4-connected unit-cost movement.
     private static int Heuristic((int X, int Y) a, (int X, int Y) b) =>

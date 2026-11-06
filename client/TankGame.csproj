@@ -30,6 +30,15 @@
     <Compile Include="tests/Presentation/**/*.cs" />
   </ItemGroup>
 
+  <!-- The scripted multiplayer player obeys command-line URLs and paths, so it stays out of exports,
+       including the debug-signed APK. Only a plain Debug build (scripts/net-e2e.mjs) has it. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' And '$(GodotTargetPlatform)' != 'web'">
+    <DefineConstants>$(DefineConstants);NET_E2E</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+    <Compile Remove="tests/Presentation/NetE2EDriver.cs" />
+  </ItemGroup>
+
   <!-- Experimental .NET web (WASM) export only. Godot sets GodotTargetPlatform=web during a web
        export, so these are scoped to it and leave Debug/test, Android and desktop builds completely
        unchanged: the static-linked mono runtime needs an executable entry point (Program.cs +

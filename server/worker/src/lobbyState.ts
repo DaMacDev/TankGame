@@ -88,6 +88,8 @@ export function reduce(state: LobbyState, command: LobbyCommand): LobbyState {
       return state.phase === "loading" ? { ...state, phase: "started" } : state;
     case "tick":
       return tick(state);
+    default:
+      return state; // the wire can carry anything; an unknown command must never lose the room state
   }
 }
 

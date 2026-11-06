@@ -118,6 +118,42 @@ public class NetArena3DSceneTests : TestClass
         }
     }
 
+    // Seen in a real run: a seat spawned on a plateau cell while tanks start on the ground layer, so the
+    // tank sat inside the plateau, invisible and unable to move.
+    [Test]
+    public void OnCliffs_EverySeatStartsOnGroundItCanDriveOn()
+    {
+        NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 0, 0,
+            new List<LobbyPlayer> { new(0, "Ada", 0, true, true) }, "CliffsAndValleys");
+        var grid = TankGame.GameLogic.CliffsArena.Create().Map.BuildGrid();
+
+        for (var seed = 0; seed < 8; seed++)
+        {
+            NetworkSession.StartedLobby = NetworkSession.StartedLobby with { Seed = seed * 1000 };
+            NetworkSession.LocalSlot = 0;
+            var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
+                .Instantiate<NetArena3DScene>();
+            TestScene.AddChild(scene);
+            try
+            {
+                foreach (var (slot, tank) in scene.Tanks)
+                {
+                    var x = (int)(tank.Position.X / 64f);
+                    var y = (int)(tank.Position.Y / 64f);
+                    if (grid.IsBlocked(x, y) || grid.LayerAt(x, y) != tank.Layer)
+                    {
+                        throw new Exception(
+                            $"Seed {seed}: seat {slot} on layer {tank.Layer} starts in cell ({x},{y}) of layer {grid.LayerAt(x, y)}.");
+                    }
+                }
+            }
+            finally
+            {
+                scene.Free();
+            }
+        }
+    }
+
     // The relay routes guest input to the lobby's host seat. If that seat is not slot 0 (the creator
     // left and the role moved on), it must still run the authority, or no client simulates anything.
     [Test]

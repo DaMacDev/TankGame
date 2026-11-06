@@ -26,6 +26,8 @@ public partial class NetE2EDriver : Node
     private readonly string _codeFile;
     private readonly string _outFile;
     private readonly int _humans;
+    private readonly string? _shotPrefix;
+    private readonly string? _map;
     private readonly Dictionary<string, object> _report = new();
     private readonly Dictionary<byte, System.Numerics.Vector2> _firstSeen = new();
     private readonly Dictionary<byte, float> _farthest = new();
@@ -37,9 +39,12 @@ public partial class NetE2EDriver : Node
     private bool _finished;
     private int _driveKey = -1;
     private bool _ownViewSeen;
+    private string? _createdCode;
 
-    private NetE2EDriver(string role, string worker, string codeFile, string outFile, int humans)
+    private NetE2EDriver(string role, string worker, string codeFile, string outFile, int humans, string? shotPrefix, string? map)
     {
+        _shotPrefix = shotPrefix;
+        _map = map;
         _role = role;
         _worker = worker;
         _codeFile = codeFile;
@@ -69,7 +74,8 @@ public partial class NetE2EDriver : Node
 
         var driver = new NetE2EDriver(
             role, args["--net-e2e-worker"], args["--net-e2e-code-file"], args["--net-e2e-out"],
-            int.Parse(args["--net-e2e-humans"], CultureInfo.InvariantCulture)) { Name = "NetE2EDriver" };
+            int.Parse(args["--net-e2e-humans"], CultureInfo.InvariantCulture),
+            args.GetValueOrDefault("--net-e2e-shot"), args.GetValueOrDefault("--net-e2e-map")) { Name = "NetE2EDriver" };
         tree.Root.CallDeferred(Node.MethodName.AddChild, driver);
         return true;
     }
@@ -84,7 +90,7 @@ public partial class NetE2EDriver : Node
         _elapsed += delta;
         if (_elapsed > TimeoutSeconds)
         {
-            Finish(false, $"timed out; lobby phase {_lobby?.Phase.ToString() ?? "none"}, playing {_playing >= 0d}");
+            Finish(false, $"timed out; lobby phase {_lobby?.Phase.ToString() ?? "none"}, played {_playing:F1}s, scene {GetTree().CurrentScene?.Name}");
             return;
         }
 
@@ -130,8 +136,9 @@ public partial class NetE2EDriver : Node
             return;
         }
 
+        _createdCode = code;
+        NetworkSession.PendingMap = _map;
         Join(code);
-        File.WriteAllText(_codeFile, code);
     }
 
     private void Join(string code)
@@ -147,6 +154,12 @@ public partial class NetE2EDriver : Node
     // Presses the same buttons a player does: guests ready up, the host starts once all are seated.
     private void DriveRoom(LobbyRoomScene room)
     {
+        if (_createdCode is not null && _lobby is not null)
+        {
+            File.WriteAllText(_codeFile, _createdCode); // seated first, so guests can't take slot 0
+            _createdCode = null;
+        }
+
         if (_lobby is not { Phase: LobbyPhase.Waiting } lobby || lobby.Players.Count < _humans)
         {
             return;
@@ -212,7 +225,17 @@ public partial class NetE2EDriver : Node
 
         if (_playing >= PlaySeconds)
         {
+            SaveScreenshot();
             Judge(arena);
+        }
+    }
+
+    // Windowed runs only (a headless viewport has no pixels): lets a person look at the real HUD.
+    private void SaveScreenshot()
+    {
+        if (_shotPrefix is not null)
+        {
+            GetViewport().GetTexture().GetImage().SavePng($"{_shotPrefix}-{_role}.png");
         }
     }
 

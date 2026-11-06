@@ -27,7 +27,8 @@ public partial class Bootstrap : Node
             Callable.From(RunTests).CallDeferred();
             return;
         }
-
+#endif
+#if NET_E2E
         if (TankGame.Tests.Presentation.NetE2EDriver.TryStart(GetTree()))
         {
             TranslationLoader.EnsureLoaded();

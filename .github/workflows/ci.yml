@@ -116,7 +116,7 @@ jobs:
       - name: Import resources
         run: godot --headless --path client --import
       - name: Run three players through a real match
-        run: node scripts/net-e2e.mjs 3
+        run: node scripts/net-e2e.mjs 3 CliffsAndValleys # layered terrain: the hardest map to spawn on
 
   worker-test:
     needs: changes

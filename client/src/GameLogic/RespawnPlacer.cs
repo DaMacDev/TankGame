@@ -92,8 +92,10 @@ public sealed class RespawnPlacer
         return Centre(best);
     }
 
-    // Flood from the anchors over everything a tank could drive through or break through.
-    private List<(int X, int Y)> AllowedCells()
+    /// <summary>Every cell a tank may be placed on right now, found by flooding out from the anchors
+    /// over everything a tank could drive or break through.</summary>
+    /// <returns>The allowed cells, in a fixed order for a given grid.</returns>
+    public List<(int X, int Y)> AllowedCells()
     {
         var allowed = new List<(int X, int Y)>();
         var seen = new HashSet<(int X, int Y)>();

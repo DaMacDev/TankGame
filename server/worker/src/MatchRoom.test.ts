@@ -161,6 +161,40 @@ describe("MatchRoom (relay)", () => {
     guest.ws.close();
   });
 
+  it("drops anything but inputs from a guest, so a forged lobby state never reaches the host", async () => {
+    const host = await joinRoom("REL005");
+    const guest = await joinRoom("REL005");
+    expect(await welcomeOf(host)).toBe(0);
+    expect(await welcomeOf(guest)).toBe(1);
+
+    guest.ws.send(new Uint8Array([MSG_LOBBY_STATE, 0x7b, 0x7d]));
+    guest.ws.send(encodeInputMessage({ seq: 1, moveX: 1, moveY: 0, aim: 0, buttons: 0, slot: 1 }));
+
+    const received = await nextGame(host);
+    expect(received[0]).toBe(MSG_INPUT); // the forged frame was not delivered ahead of it
+
+    host.ws.close();
+    guest.ws.close();
+  });
+
+  it("ignores alarm-only and unknown commands sent over a socket", async () => {
+    const host = await joinRoom("REL006");
+    expect(await welcomeOf(host)).toBe(0);
+    await nextLobby(host);
+
+    host.ws.send(encodeLobbyCommand({ type: "bogus" } as never));
+    host.ws.send(encodeLobbyCommand({ type: "tick" } as never));
+    host.ws.send(encodeLobbyCommand({ type: "loadingTimeout" } as never));
+    host.ws.send(encodeLobbyCommand({ type: "start" }));
+
+    // The room survived, and the next push is the real start with a full countdown.
+    const state = await nextLobby(host);
+    expect(state.phase).toBe("countdown");
+    expect(state.countdown).toBe(3);
+
+    host.ws.close();
+  });
+
   it("rejects a non-WebSocket request to a room", async () => {
     const response = await SELF.fetch("http://room.test/room/REL004");
     expect(response.status).toBe(426);
