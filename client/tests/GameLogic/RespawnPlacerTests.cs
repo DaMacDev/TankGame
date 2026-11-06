@@ -159,6 +159,21 @@ public class RespawnPlacerTests
     }
 
     [Fact]
+    public void OnCliffs_RespawnsStayOnTheLayerTanksStartOn()
+    {
+        var cliffs = CliffsArena.Create();
+        var grid = cliffs.Map.BuildGrid();
+        var anchors = new List<(int X, int Y)>(cliffs.EnemySpawns) { cliffs.PlayerSpawn };
+        var placer = new RespawnPlacer(grid, Tile, Vector2.Zero, anchors, new Random(2));
+        var arena = new GridArena(grid, Tile, Vector2.Zero);
+
+        for (var i = 0; i < 200; i++)
+        {
+            Assert.False(arena.IsBlocked(placer.Pick(Array.Empty<IEntity>()), 0));
+        }
+    }
+
+    [Fact]
     public void TanksThatDieTogether_ComeBackApart()
     {
         var world = new World();

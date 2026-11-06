@@ -79,6 +79,8 @@ public partial class NetArena3DScene : Node3D
     private readonly NetMatchStats _netStats = new();
     private VictoryScreen? _victory;
     private CanvasLayer _leaveLayer = null!;
+    private MatchHud _matchHud = null!;
+    private readonly List<ITank> _hudTanks = new();
 
     /// <summary>The decided round (FFA: last tank standing; Team: last team standing). The host
     /// evaluates it each authoritative tick; a guest derives the same verdict from the snapshot's
@@ -193,6 +195,8 @@ public partial class NetArena3DScene : Node3D
         AddChild(_status); // shows "Connecting…" until the welcome arrives
 
         BuildLeaveButton();
+        _matchHud = new MatchHud { Name = "MatchHud" };
+        AddChild(_matchHud);
 
         _transport.WelcomeReceived += OnWelcome;
         _transport.SnapshotReceived += OnSnapshot;
@@ -327,6 +331,19 @@ public partial class NetArena3DScene : Node3D
         }
 
         FollowLocalTank();
+        RefreshHud(delta);
+    }
+
+    private void RefreshHud(float delta)
+    {
+        if (_localSlot is not byte slot || !_tanks.TryGetValue(slot, out var self))
+        {
+            return;
+        }
+
+        _hudTanks.Clear();
+        _hudTanks.AddRange(_tanks.Values);
+        _matchHud.Refresh(delta, _camera, self, _hudTanks);
     }
 
     private void StepFixedTick()
@@ -404,6 +421,7 @@ public partial class NetArena3DScene : Node3D
 
         _hostInput = BuildLocalInput();
         var guestInputs = new Dictionary<byte, RelayedInputSource>();
+        var humans = new List<ITank>(); // fills up below; bots read it live, so seat order doesn't matter
 
         // One tank per roster seat: the host on local input, each remote human on a relayed input
         // keyed by its slot, and every un-joined seat an AI tank carrying the placeholder name the
@@ -419,7 +437,8 @@ public partial class NetArena3DScene : Node3D
                 // of the same match (issue #3). Host-only, so no cross-peer determinism needed.
                 // Host's persisted difficulty governs net bots (guests mirror host snapshots anyway).
                 _ => ai = new AiInputSource(_world, _arena, grid: _grid, tileSize: TileSize, origin: GridOrigin,
-                    seed: _matchSeed ^ seat.Slot, difficulty: GameSetup.BotDifficulty),
+                    seed: _matchSeed ^ seat.Slot, difficulty: GameSetup.BotDifficulty,
+                    players: humans, ticksPerSecond: 1f / TickSeconds),
             };
 
             var spawn = _spawns[seat.Slot % _spawns.Count];
@@ -430,6 +449,11 @@ public partial class NetArena3DScene : Node3D
                 TankSpeed, fireInterval, ProjectileSpeed, maxHp: TankMaxHp, team: seat.Team,
                 teleporter: _teleporter, displayName: seat.Name);
             ai?.Bind(tank);
+            if (ai is null)
+            {
+                humans.Add(tank);
+            }
+
             _tanks[seat.Slot] = tank;
             _rosterTanks.Add((seat.Slot, tank));
             _world.Spawn(tank);
@@ -822,6 +846,7 @@ public partial class NetArena3DScene : Node3D
             GetViewport().GetVisibleRect().Size, ChampionName(winningTeam), sheets, buttons);
         AddChild(_victory);
         _leaveLayer.Visible = false; // the screen's buttons take over — no doubled corner controls
+        _matchHud.Visible = false;
     }
 
     private VictoryScreen.Sheet RankedSheet(

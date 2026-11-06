@@ -5,8 +5,8 @@ using TankGame.Domain;
 namespace TankGame.GameLogic;
 
 /// <summary>Pure, deterministic A* over the passable cells of an <see cref="IWallGrid"/>. A cell is
-/// passable when it does not block movement (<see cref="CellMaterials.BlocksMovement"/>) — so floor
-/// and bridges are walkable, brick/steel/crate/water/mountain/building are not. Movement is
+/// passable when it does not block movement (<see cref="CellMaterials.BlocksMovement"/>) and is not
+/// lethal — so floor and bridges are walkable, brick/steel/crate/water/mountain/building/lava are not. Movement is
 /// 4-connected (orthogonal steps only), so a returned path never cuts a wall corner diagonally.
 /// No Godot, no randomness: the same grid, start and goal always yield the same path, which keeps
 /// AI steering reproducible across host and clients. Returns an empty list when the goal is
@@ -74,8 +74,11 @@ public static class GridPathfinder
         return Array.Empty<(int, int)>();
     }
 
-    private static bool Passable(IWallGrid grid, int x, int y) =>
-        !CellMaterials.BlocksMovement(grid.GetCell(x, y).Material);
+    private static bool Passable(IWallGrid grid, int x, int y)
+    {
+        var material = grid.GetCell(x, y).Material;
+        return !CellMaterials.BlocksMovement(material) && !CellMaterials.IsLethal(material);
+    }
 
     // Manhattan distance — admissible for 4-connected unit-cost movement.
     private static int Heuristic((int X, int Y) a, (int X, int Y) b) =>
