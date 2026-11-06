@@ -32,6 +32,10 @@ EDITOR="C:/godot-web-export/.../Godot_v4.6.2-stable_mono_web_export_win64.exe"
 "$EDITOR" --headless --path client --export-release "Web" "$(pwd)/build/web/index.html"
 ```
 
+The export needs the .NET 9 SDK. If a newer SDK is the machine default, the build stops with
+`NETSDK1147 ... wasm-tools-net9`: copy the web-export editor's `global.json` into `client/` for the
+export, and don't commit it.
+
 Serve locally with COOP/COEP to test (the build needs cross-origin isolation): any server sending
 `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp` works.
 

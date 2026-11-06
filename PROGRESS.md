@@ -79,6 +79,7 @@ dashboard reads — keep it in sync with the detailed sections below.
   the final merged tree. Remaining (owner-gated): lava look eyeball, fire-loudness ear-check at −6 dB,
   arcade WASM re-export + ProjectX/Firebase redeploy (confirm before live push), two-device net spawn
   sanity.
+- [~] Multiplayer + AI batch 2026-11-06 (#273/#274/#275/#276): **online matches stalled on the loaded map** because the freed lobby room stayed subscribed to the socket and its throw kept the arena from hearing "started" — fixed, plus sockets close on leave, the host seat runs the match in any slot, a 45 s loading timeout, and a tighter relay (host sends snapshots, guests send inputs, no client-sent alarm commands). Online spawns no longer land inside plateaus. **Respawns** land on any allowed cell away from every tank (`RespawnPlacer`), and overlapping tanks can always drive apart. **AI** roams the map toward players, heads for the nearest player after 8 quiet seconds and only fights other bots when shot at (longest stretch without a bot near a still player: from up to 180 s to at most 25 s in 3-minute headless matches). **HUD**: alive-enemies count and enemy arrows (`MatchHud`). New check: `node scripts/net-e2e.mjs [humans] [mapId]` runs real game processes over real sockets, also in CI. Follow-up: #277 host leaving a running match. Remaining: two-phone playtest, arcade redeploy.
 
 ## Current status: **M1 + S1 + M2 + local-first combat arc complete; local polish arc in progress** (2026-06-03)
 
