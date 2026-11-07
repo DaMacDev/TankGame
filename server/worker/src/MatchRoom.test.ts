@@ -35,6 +35,7 @@ async function joinRoom(code: string, name?: string): Promise<Conn> {
 
   const buffered: Uint8Array[] = [];
   const waiters: ((message: Uint8Array) => void)[] = [];
+  ws!.binaryType = "arraybuffer"; // the 2026 compat date defaults a client socket to Blob
   ws!.accept();
   ws!.addEventListener("message", (event: MessageEvent) => {
     const message = new Uint8Array(event.data as ArrayBuffer);

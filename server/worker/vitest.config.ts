@@ -1,16 +1,15 @@
-import { defineWorkersProject } from "@cloudflare/vitest-pool-workers/config";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
+import { defineConfig } from "vitest/config";
 
-export default defineWorkersProject({
-  test: {
-    poolOptions: {
-      workers: {
-        wrangler: { configPath: "./wrangler.toml" },
-        miniflare: {
-          bindings: {
-            SENTRY_DSN_WORKER: "https://public@example.invalid/1",
-          },
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.toml" },
+      miniflare: {
+        bindings: {
+          SENTRY_DSN_WORKER: "https://public@example.invalid/1",
         },
       },
-    },
-  },
+    }),
+  ],
 });
