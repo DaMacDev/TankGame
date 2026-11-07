@@ -274,6 +274,18 @@ public partial class NetArena3DScene : Node3D
         rows.AddChild(message);
         rows.AddChild(leave);
         var card = new PanelContainer { Name = "HostLeftCard" };
+        card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0f, 0f, 0f, 0.85f),
+            ContentMarginLeft = 32f,
+            ContentMarginRight = 32f,
+            ContentMarginTop = 24f,
+            ContentMarginBottom = 24f,
+            CornerRadiusBottomLeft = 12,
+            CornerRadiusBottomRight = 12,
+            CornerRadiusTopLeft = 12,
+            CornerRadiusTopRight = 12,
+        });
         card.AddChild(rows);
         var centre = new CenterContainer();
         centre.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
