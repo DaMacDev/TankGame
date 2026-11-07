@@ -19,7 +19,7 @@ concurrency:
 jobs:
   # The Android export below is expensive (installs the full Android SDK + NDK and
   # runs a headless Godot export, ~15 min). Only rebuild the APK when client code
-  # actually changes — a docs/worker/workflow-only merge must not trigger it. The
+  # or this workflow changes — a docs/worker-only merge must not trigger it. The
   # cheap Cloudflare deploys stay unconditional so the landing-page SHA still
   # refreshes on every merge.
   changes:
@@ -34,6 +34,7 @@ jobs:
           filters: |
             client:
               - 'client/**'
+              - '.github/workflows/deploy.yml'
 
   deploy-worker:
     runs-on: ubuntu-latest
@@ -121,6 +122,8 @@ jobs:
           dotnet-version: '9.0.x'
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools # the default adds `tools`, which is no longer in the SDK repository
       - name: Install Android SDK packages
         run: |
           sdkmanager --install \
