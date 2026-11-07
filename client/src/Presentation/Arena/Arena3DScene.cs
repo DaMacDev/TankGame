@@ -114,6 +114,8 @@ public partial class Arena3DScene : Node3D
             return;
         }
 
+        _matchHud.Visible = false;
+
         IsMatchOver = true;
         _sfx.PlayUi(SfxKind.Victory);
 
@@ -174,6 +176,8 @@ public partial class Arena3DScene : Node3D
     private Camera3D _camera = null!;
     private ITank _player = null!;
     private RespawnHud _respawnHud = null!;
+    private MatchHud _matchHud = null!;
+    private readonly List<ITank> _hudTanks = new();
 
     // The fog spotlight rides the player and lights roughly a vision-radius circle on the ground; the
     // viewers are the tanks whose sight reveals the field (just the player today; co-op allies would join
@@ -451,6 +455,7 @@ public partial class Arena3DScene : Node3D
         var layer = new CanvasLayer { Name = "TouchPauseLayer", Layer = 3 };
         var pause = new Button { Name = "TouchPause", Text = "pause.open" };
         pause.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight);
+        pause.GrowHorizontal = Control.GrowDirection.Begin; // or it runs off the right edge of the screen
         pause.Position += new Vector2(-16f, 16f);
         pause.CustomMinimumSize = new Vector2(112f, 64f); // a comfortable thumb target
         pause.Pressed += () => { _sfx.PlayUi(SfxKind.UiClick); if (!_paused) TogglePause(); };
@@ -537,6 +542,17 @@ public partial class Arena3DScene : Node3D
         UpdateConcealment();  // hide enemies outside the player's vision; darken the player in cover
         UpdatePadViews();     // pulse ready pads, dim ones on cooldown
         _respawnHud.Show(_player.LivesRemaining - 1); // dim a tank icon as each respawn is spent
+
+        _hudTanks.Clear();
+        foreach (var entity in _world.Entities)
+        {
+            if (entity is ITank tank)
+            {
+                _hudTanks.Add(tank);
+            }
+        }
+
+        _matchHud.Refresh((float)delta, _camera, _player, _hudTanks);
     }
 
     private static Vector3 CameraOffset()
@@ -721,7 +737,8 @@ public partial class Arena3DScene : Node3D
     private void SpawnTanks()
     {
         // Every match deals its spawn markers randomly (issue #4): the player and every AI draw a
-        // distinct cell from the combined marker pool, and each respawn re-rolls from the same pool.
+        // distinct cell from the combined marker pool. A respawn is not tied to the markers: it lands
+        // on any allowed cell away from every live tank (RespawnPlacer).
         // Seeded by the arena so a best-of-N series is reproducible. (Procedural Desert already varies
         // by seed; shuffling its distinct spawns too is harmless and keeps every map consistent.)
         var playerCell = _playerSpawn;
@@ -739,11 +756,8 @@ public partial class Arena3DScene : Node3D
 
             playerCell = pool[0];
             enemyCells = pool.Skip(1).ToList();
-            respawnPoint = () =>
-            {
-                var cell = pool[rng.Next(pool.Count)];
-                return CellCentre(cell.X, cell.Y);
-            };
+            var placer = new RespawnPlacer(_grid, TileSize, GridOrigin, pool, rng, reserved: OnTeleportPad);
+            respawnPoint = () => placer.Pick(_world.Entities);
         }
 
         var p1Input = BuildPlayerInput();
@@ -755,6 +769,8 @@ public partial class Arena3DScene : Node3D
         _viewers.Add(player); // the player's sight reveals the field; co-op allies would join this list
         SpawnTank(player);
 
+        _matchHud = new MatchHud { Name = "MatchHud" };
+        AddChild(_matchHud);
         _respawnHud = new RespawnHud { Name = "RespawnHud" };
         AddChild(_respawnHud);
         _respawnHud.Show(player.LivesRemaining - 1); // respawns in hand (one life is the tank fighting now)
@@ -769,7 +785,8 @@ public partial class Arena3DScene : Node3D
             var seed = GameSetup.ArenaSeed ^ ((enemyIndex + 1) * 0x51ED2701);
             var ambusher = (seed & 4) != 0;
             var ai = new AiInputSource(_world, _arena, _bushes, ambusher, _grid, TileSize, GridOrigin, seed: seed,
-                difficulty: GameSetup.BotDifficulty);
+                difficulty: GameSetup.BotDifficulty, players: new ITank[] { player },
+                ticksPerSecond: 1f / _timestep.StepSeconds);
             var enemy = new Tank(ai, _world, _arena, CellCentre(ex, ey),
                 EnemySpeed, FireInterval * DifficultyPreset.For(GameSetup.BotDifficulty).FireIntervalScale,
                 ProjectileSpeed, maxHp: TankMaxHp, team: EnemyTeam, lives: StartingLives,
@@ -780,6 +797,37 @@ public partial class Arena3DScene : Node3D
         }
 
         SetUpFog(); // single-player → fog the field with a lit circle around the player
+    }
+
+    /// <summary>How many enemy tanks are still in the match. For the tests.</summary>
+    public int AliveEnemyTanks
+    {
+        get
+        {
+            var alive = 0;
+            foreach (var entity in _world.Entities)
+            {
+                if (entity is ITank { IsAlive: true } tank && tank.Team != PlayerTeam)
+                {
+                    alive++;
+                }
+            }
+
+            return alive;
+        }
+    }
+
+    private bool OnTeleportPad(NVector2 point)
+    {
+        foreach (var pad in _teleporter.PadStatuses())
+        {
+            if (NVector2.Distance(pad.Position, point) <= TeleportPadRadius + Tank.CollisionRadius)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Place one linked pair of teleport pads on the two best-separated floor cells (near opposite quarters),

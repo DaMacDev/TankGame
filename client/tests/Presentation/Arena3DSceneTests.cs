@@ -1,3 +1,4 @@
+using System;
 using Godot;
 using Chickensoft.GoDotTest;
 using TankGame.GameLogic;
@@ -40,6 +41,22 @@ public class Arena3DSceneTests : TestClass
         System.GC.Collect();
         System.GC.WaitForPendingFinalizers();
         System.GC.Collect();
+    }
+
+    [Test]
+    public void TheHud_CountsTheAliveEnemies_FromTheFirstFrame()
+    {
+        TankGame.Infrastructure.TranslationLoader.EnsureLoaded();
+        var scene = (Arena3DScene)_arena;
+        scene._Process(1d / 60d);
+
+        var label = _arena.FindChild("EnemiesLeft", recursive: true, owned: false) as Label
+            ?? throw new Exception("The arena must show the alive-enemies counter.");
+        if (!label.Text.Contains(scene.AliveEnemyTanks.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            || scene.AliveEnemyTanks == 0)
+        {
+            throw new Exception($"The counter must show {scene.AliveEnemyTanks} enemies; showed '{label.Text}'.");
+        }
     }
 
     // Victory screen (owner ask 2026-06-11/14, rebuilt): a generated celebration backdrop with the

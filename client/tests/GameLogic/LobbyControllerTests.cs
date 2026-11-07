@@ -29,6 +29,21 @@ public class LobbyControllerTests
         new(GameMode.Ffa, phase, hostSlot, phase == LobbyPhase.Countdown ? 3 : 0, players);
 
     [Fact]
+    public void Dispose_StopsReactingToTheSocketThatOutlivesTheRoom()
+    {
+        var transport = new FakeTransport();
+        var controller = new LobbyController(transport);
+        var changes = 0;
+        controller.Changed += () => changes++;
+
+        controller.Dispose();
+        transport.RaiseLobby(View(LobbyPhase.Started, 0, new LobbyPlayer(0, "Ada", 0, false)));
+
+        Assert.Equal(0, changes);
+        Assert.Null(controller.State);
+    }
+
+    [Fact]
     public void Welcome_RecordsTheLocalSlotAndNotifies()
     {
         var transport = new FakeTransport();

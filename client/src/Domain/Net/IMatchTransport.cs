@@ -20,8 +20,7 @@ public interface IMatchTransport
     /// events directly and leave this a no-op.</summary>
     void Poll();
 
-    /// <summary>Raised once on connect with the slot the server assigned this client (0 host /
-    /// 1 guest) — the slot it predicts and renders as its own.</summary>
+    /// <summary>Raised once on connect with the slot the server assigned this client — the slot it predicts and renders as its own.</summary>
     event Action<byte> WelcomeReceived;
 
     /// <summary>Raised when an authoritative snapshot arrives from the server.</summary>
@@ -56,6 +55,12 @@ public interface IMatchTransport
 
     /// <summary>Sends a pre-game lobby command (already tag-encoded by <see cref="LobbyProtocol"/>).</summary>
     void SendLobby(byte[] command)
+    {
+    }
+
+    /// <summary>Closes the connection so the server frees this client's seat at once. A seat left
+    /// behind would block every other player's Start and loading handshake.</summary>
+    void Close()
     {
     }
 }

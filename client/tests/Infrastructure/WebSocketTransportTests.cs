@@ -16,6 +16,10 @@ public class WebSocketTransportTests
         public List<byte[]> Sent { get; } = new();
         public Queue<byte[]> Inbound { get; } = new();
 
+        public bool Closed { get; private set; }
+
+        public void Close() => Closed = true;
+
         public void Send(byte[] data) => Sent.Add(data);
 
         public IReadOnlyList<byte[]> Poll()
@@ -24,6 +28,16 @@ public class WebSocketTransportTests
             Inbound.Clear();
             return batch;
         }
+    }
+
+    [Fact]
+    public void Close_ClosesTheSocket_SoTheServerFreesTheSeat()
+    {
+        var socket = new FakeSocket();
+
+        new WebSocketTransport(socket).Close();
+
+        Assert.True(socket.Closed);
     }
 
     [Fact]

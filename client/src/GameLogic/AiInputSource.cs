@@ -43,6 +43,9 @@ public readonly record struct AiPersonality(
 /// <c>personalityWeight × normalizedUtility</c>, commits to the winning state for a short window
 /// (hysteresis, so it doesn't flip-flop each tick), and picks <em>which</em> enemy/pickup by
 /// closeness-weighted random rather than always the nearest, so two bots in the same spot diverge.
+/// With nothing to do it roams across the map, usually toward the players' area, so no player drives
+/// around alone for long; after <see cref="EnemyCompass.QuietSeconds"/> without a fight it heads straight
+/// for its nearest enemy (the same nudge the HUD arrows give a player).
 /// A visible enemy within firing range always overrides to engage-and-fire. Line-of-sight, bush
 /// concealment, and vision-range gating are unchanged; with a wall grid it routes around cover via A*.
 /// Pure C#: no Godot. Bind it to the tank it drives after construction.</summary>
@@ -54,6 +57,12 @@ public sealed class AiInputSource : IInputSource
     private const float AmbushSeekRange = 600f;
     private const float EarshotRange = 900f;
     private const int WanderTicks = 75;
+    private const float RepathSeconds = 2f;
+    private const float RoamGiveUpSeconds = 30f;
+    private const int PlayerAreaSpreadCells = 4;
+    private const int FarCellTries = 12;
+    private const int MinRoamCells = 12;
+    private const float RetaliateSeconds = 4f;
 
     // Ticks a tank stays committed to a chosen state before it is allowed to re-evaluate, so a bot
     // pursues one intent rather than dithering between a pickup and a fight every frame.
@@ -71,6 +80,22 @@ public sealed class AiInputSource : IInputSource
     private readonly AiPersonality? _explicitPersonality;
     private readonly int? _seed;
     private readonly DifficultyPreset _preset;
+    private readonly IReadOnlyList<ITank>? _players;
+    private readonly bool _respectTeams;
+    private readonly int _quietTicksLimit;
+    private readonly int _repathTicks;
+    private readonly int _roamGiveUpTicks;
+    private readonly int _retaliateTicks;
+
+    private int _quietTicks;
+    private int _ticksSinceHurt = int.MaxValue;
+    private int _lastHealth;
+    private Vector2? _roamGoal;
+    private IReadOnlyList<(int X, int Y)> _route = Array.Empty<(int, int)>();
+    private int _routeIndex;
+    private int _routeAge;
+    private int _repathCountdown;
+    private Vector2 _progressMark;
 
     private ITank? _self;
     private Random _rng = new();
@@ -93,7 +118,14 @@ public sealed class AiInputSource : IInputSource
     /// The host passes <c>matchSeed ^ slot</c> so each bot differs yet a match is reproducible. Omit to
     /// derive from the tank id, as before.</param>
     /// <param name="difficulty">Bot skill preset: scales vision and (on Easy) adds a seeded aim error
-    /// when firing. Default Normal is exactly the pre-difficulty behaviour.</param>
+    /// when firing, and sets how often a roaming bot heads for the players.</param>
+    /// <param name="players">The human players' tanks: a roaming bot is drawn to their area, and while
+    /// one lives the bot only fights other bots when shot at. May still be filling up when passed. Null:
+    /// every other tank is equally a target.</param>
+    /// <param name="respectTeams">True in Team mode: tanks on this bot's team are never targets. False
+    /// where bots share a team yet fight each other (solo) or every tank has its own team (FFA).</param>
+    /// <param name="ticksPerSecond">How often <see cref="Read"/> is called, so the time-based roaming
+    /// rules hold at both the solo (60 Hz) and networked (20 Hz) tick.</param>
     public AiInputSource(
         IWorld world,
         IArena arena,
@@ -104,7 +136,10 @@ public sealed class AiInputSource : IInputSource
         Vector2 origin = default,
         AiPersonality? personality = null,
         int? seed = null,
-        Difficulty difficulty = Difficulty.Normal)
+        Difficulty difficulty = Difficulty.Normal,
+        IReadOnlyList<ITank>? players = null,
+        bool respectTeams = false,
+        float ticksPerSecond = 60f)
     {
         _world = world;
         _arena = arena;
@@ -116,12 +151,19 @@ public sealed class AiInputSource : IInputSource
         _explicitPersonality = personality;
         _seed = seed;
         _preset = DifficultyPreset.For(difficulty);
+        _players = players;
+        _respectTeams = respectTeams;
+        _quietTicksLimit = (int)(EnemyCompass.QuietSeconds * ticksPerSecond);
+        _repathTicks = (int)(RepathSeconds * ticksPerSecond);
+        _roamGiveUpTicks = (int)(RoamGiveUpSeconds * ticksPerSecond);
+        _retaliateTicks = (int)(RetaliateSeconds * ticksPerSecond);
     }
 
     /// <summary>Links this controller to the tank it drives and finalises its seeded RNG + temperament.</summary>
     public void Bind(ITank self)
     {
         _self = self;
+        _lastHealth = self.Hp + self.Shield;
         _rng = new Random(_seed ?? self.Id.GetHashCode());
         var rolled = _explicitPersonality ?? AiPersonality.Roll(_rng);
         // Difficulty scales how far this bot sees, on top of whatever temperament it rolled.
@@ -135,6 +177,12 @@ public sealed class AiInputSource : IInputSource
             return Hold();
         }
 
+        // Getting hurt counts as fighting even when the shooter is out of sight.
+        var health = _self.Hp + _self.Shield;
+        _quietTicks = health < _lastHealth ? 0 : _quietTicks + 1;
+        _ticksSinceHurt = health < _lastHealth ? 0 : _ticksSinceHurt == int.MaxValue ? int.MaxValue : _ticksSinceHurt + 1;
+        _lastHealth = health;
+
         // Ambusher pre-empt: slip into grass and lie in wait when there is prey to ambush.
         if (_ambusher && _concealment is not null && Ambush() is { } ambushIntent)
         {
@@ -142,6 +190,10 @@ public sealed class AiInputSource : IInputSource
         }
 
         var enemy = PickEnemy();
+        if (enemy is not null)
+        {
+            _quietTicks = 0;
+        }
 
         // Hard override: an enemy within firing range is always engaged, holding at stand-off — combat
         // never yields to a pickup or a distraction. This preserves the core "fight what's on top of you".
@@ -150,7 +202,9 @@ public sealed class AiInputSource : IInputSource
             var distance = Vector2.Distance(enemy.Position, _self.Position);
             if (distance <= FireRange)
             {
-                var move = distance > _personality.Standoff ? DirectionTo(enemy.Position) : Vector2.Zero;
+                var move = distance > _personality.Standoff && StraightLineIsSafe(enemy.Position)
+                    ? DirectionTo(enemy.Position)
+                    : Vector2.Zero;
                 return new TankInput(move, JitteredAim(AimAt(enemy.Position)), Fire: true);
             }
         }
@@ -176,7 +230,7 @@ public sealed class AiInputSource : IInputSource
             AiState.Hunt => Engage(enemy!),
             AiState.SeekPowerup => SeekPickup(powerup!, enemy),
             AiState.Investigate => DriveToward(shot!.Value),
-            _ => Wander(),
+            _ => Roam(),
         };
     }
 
@@ -269,7 +323,7 @@ public sealed class AiInputSource : IInputSource
         var path = GridPathfinder.FindPath(_grid, start, goalCell);
         if (path.Count < 2)
         {
-            return DirectionTo(goal);
+            return StraightLineIsSafe(goal) ? DirectionTo(goal) : Vector2.Zero;
         }
 
         return DirectionTo(CellCentre(path[1]));
@@ -308,10 +362,228 @@ public sealed class AiInputSource : IInputSource
         }
 
         var spot = _concealment.NearestConcealment(_self.Position, AmbushSeekRange);
-        return spot is null ? null : new TankInput(DirectionTo(spot.Value), aim, fire);
+        return spot is null || !StraightLineIsSafe(spot.Value) ? null : new TankInput(DirectionTo(spot.Value), aim, fire);
     }
 
-    // Roam: hold a heading for a while, then pick a fresh one — an idle tank keeps moving into fights.
+    // Nothing in sight: travel with purpose. A quiet spell sends the bot straight at its nearest enemy;
+    // otherwise it follows a route to a goal it re-picks on arrival. Routes are cached because roam goals
+    // sit across the map, and running A* over that distance on every tick would be wasted work.
+    private TankInput Roam()
+    {
+        var quarry = _quietTicks >= _quietTicksLimit ? NearestPlayer() : null;
+        if (_grid is null || _tileSize <= 0f)
+        {
+            return quarry is not null ? DriveToward(quarry.Position) : Wander();
+        }
+
+        _routeAge++;
+        _repathCountdown--;
+        var repathDue = _repathCountdown <= 0;
+        var stuck = repathDue && Vector2.Distance(_self!.Position, _progressMark) < _tileSize / 2f;
+
+        // No progress means the quarry is out of reach (up on a plateau, across water) or the way is
+        // jammed: forget it for one more quiet spell and go exploring instead of pressing the obstacle.
+        if (quarry is not null && stuck)
+        {
+            quarry = null;
+            _quietTicks = 0;
+        }
+
+        if (quarry is not null)
+        {
+            if (repathDue || _roamGoal is null)
+            {
+                SetRoute(quarry.Position);
+            }
+        }
+        else if (_roamGoal is not { } goal
+            || stuck
+            || _routeAge > _roamGiveUpTicks
+            || Vector2.Distance(_self!.Position, goal) < _tileSize * 1.5f)
+        {
+            SetRoute(PickRoamGoal());
+        }
+        else if (repathDue)
+        {
+            SetRoute(goal); // walls fall during a match, so the old route may no longer be the best
+        }
+
+        return FollowRoute();
+    }
+
+    private void SetRoute(Vector2 goal)
+    {
+        if (goal != _roamGoal)
+        {
+            _routeAge = 0;
+        }
+
+        _roamGoal = goal;
+        _route = GridPathfinder.FindPath(_grid!, ToCell(_self!.Position), ToCell(goal));
+        _routeIndex = 1;
+        _repathCountdown = _repathTicks;
+        _progressMark = _self.Position;
+    }
+
+    private TankInput FollowRoute()
+    {
+        // No route (the goal is walled in by bricks): drive straight, since pushing breaks bricks, unless
+        // that line crosses lava. Then drop the goal; the next tick picks a new one.
+        var next = _roamGoal!.Value;
+        if (_route.Count == 0 && !StraightLineIsSafe(next))
+        {
+            _roamGoal = null;
+            _quietTicks = 0;
+            return Hold();
+        }
+
+        while (_routeIndex < _route.Count)
+        {
+            var waypoint = CellCentre(_route[_routeIndex]);
+            if (Vector2.Distance(_self!.Position, waypoint) >= _tileSize * 0.35f)
+            {
+                next = waypoint;
+                break;
+            }
+
+            _routeIndex++;
+        }
+
+        var delta = next - _self!.Position;
+        return new TankInput(DirectionTo(next), MathF.Atan2(delta.Y, delta.X), Fire: false);
+    }
+
+    // Half-tile samples can't step over a whole lethal cell.
+    private bool StraightLineIsSafe(Vector2 goal)
+    {
+        if (_grid is null || _tileSize <= 0f)
+        {
+            return true;
+        }
+
+        var from = _self!.Position;
+        var samples = (int)(Vector2.Distance(from, goal) / (_tileSize / 2f));
+        for (var i = 1; i <= samples; i++)
+        {
+            var (x, y) = ToCell(Vector2.Lerp(from, goal, i / (float)samples));
+            if (CellMaterials.IsLethal(_grid.GetCell(x, y).Material))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private Vector2 PickRoamGoal()
+    {
+        var player = (float)_rng.NextDouble() < _preset.PlayerSeekChance ? NearestPlayer() : null;
+        if (player is not null)
+        {
+            var (x, y) = ToCell(player.Position);
+            for (var i = 0; i < FarCellTries; i++)
+            {
+                var cell = (
+                    X: x + _rng.Next(-PlayerAreaSpreadCells, PlayerAreaSpreadCells + 1),
+                    Y: y + _rng.Next(-PlayerAreaSpreadCells, PlayerAreaSpreadCells + 1));
+                if (CanRoamTo(cell))
+                {
+                    return CellCentre(cell);
+                }
+            }
+
+            return player.Position;
+        }
+
+        // Exploring: the farthest of a few random open cells, so a bot crosses the map, not its corner.
+        var here = ToCell(_self!.Position);
+        var best = here;
+        var bestDistance = -1;
+        for (var i = 0; i < FarCellTries; i++)
+        {
+            var cell = (X: _rng.Next(_grid!.Width), Y: _rng.Next(_grid.Height));
+            var distance = Math.Abs(cell.X - here.X) + Math.Abs(cell.Y - here.Y);
+            if (CanRoamTo(cell) && distance > bestDistance)
+            {
+                best = cell;
+                bestDistance = distance;
+                if (distance >= MinRoamCells * 2)
+                {
+                    break;
+                }
+            }
+        }
+
+        return CellCentre(best);
+    }
+
+    private bool CanRoamTo((int X, int Y) cell) =>
+        !_grid!.IsBlocked(cell.X, cell.Y) && !CellMaterials.IsLethal(_grid.GetCell(cell.X, cell.Y).Material);
+
+    // While a player is alive, bots save their fire for players: in measured matches bots that dueled
+    // whichever bot they met next used up all their lives across the map from the player, who met nobody.
+    // Getting shot still gets an answer, whoever fired.
+    private bool IsAlly(ITank tank) => _respectTeams && tank.Team == _self!.Team;
+
+    private bool IgnoresRival(ITank tank)
+    {
+        if (_players is null || _ticksSinceHurt <= _retaliateTicks)
+        {
+            return false;
+        }
+
+        var anyPlayerAlive = false;
+        for (var i = 0; i < _players.Count; i++)
+        {
+            if (ReferenceEquals(_players[i], tank))
+            {
+                return false;
+            }
+
+            anyPlayerAlive |= _players[i].Hp > 0 && !IsAlly(_players[i]);
+        }
+
+        return anyPlayerAlive;
+    }
+
+    private ITank? NearestPlayer()
+    {
+        ITank? nearest = null;
+        if (_players is not null)
+        {
+            for (var i = 0; i < _players.Count; i++)
+            {
+                if (_players[i].Hp > 0 && !ReferenceEquals(_players[i], _self) && !IsAlly(_players[i])
+                    && IsCloser(_players[i], nearest))
+                {
+                    nearest = _players[i];
+                }
+            }
+        }
+
+        return nearest ?? NearestEnemy();
+    }
+
+    // The bot's arrow: any other live tank, seen or not.
+    private ITank? NearestEnemy()
+    {
+        ITank? nearest = null;
+        foreach (var entity in _world.Entities)
+        {
+            if (entity is ITank { Hp: > 0 } tank && !ReferenceEquals(tank, _self) && !IsAlly(tank) && IsCloser(tank, nearest))
+            {
+                nearest = tank;
+            }
+        }
+
+        return nearest;
+    }
+
+    private bool IsCloser(ITank tank, ITank? than) =>
+        than is null
+        || Vector2.DistanceSquared(tank.Position, _self!.Position) < Vector2.DistanceSquared(than.Position, _self!.Position);
+
+    // Roam without a grid to route over: hold a heading for a while, then pick a fresh one.
     private TankInput Wander()
     {
         if (_wanderCooldown <= 0 || _wanderDirection == Vector2.Zero)
@@ -375,7 +647,7 @@ public sealed class AiInputSource : IInputSource
         var found = new List<ITank>();
         foreach (var entity in _world.Entities)
         {
-            if (entity is not ITank tank || tank.Hp <= 0 || tank.Id == _self!.Id)
+            if (entity is not ITank tank || tank.Hp <= 0 || tank.Id == _self!.Id || IsAlly(tank) || IgnoresRival(tank))
             {
                 continue;
             }

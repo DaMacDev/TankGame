@@ -10,7 +10,7 @@ namespace TankGame.GameLogic;
 /// commands. The lobby UI binds to <see cref="Changed"/> and reads <see cref="State"/> /
 /// <see cref="LocalPlayer"/> / <see cref="IsHost"/>; it never parses the wire itself. Pure C# (no
 /// Godot) so the whole flow tests against a fake transport.</summary>
-public sealed class LobbyController
+public sealed class LobbyController : IDisposable
 {
     private readonly IMatchTransport _transport;
 
@@ -19,6 +19,14 @@ public sealed class LobbyController
         _transport = transport;
         transport.WelcomeReceived += OnWelcome;
         transport.LobbyStateReceived += OnLobbyState;
+    }
+
+    /// <summary>Stops listening to the transport. The socket outlives the room scene that owns this
+    /// controller, so a leftover subscription would keep pushing lobby states into a freed scene.</summary>
+    public void Dispose()
+    {
+        _transport.WelcomeReceived -= OnWelcome;
+        _transport.LobbyStateReceived -= OnLobbyState;
     }
 
     /// <summary>The latest authoritative lobby snapshot, or null before the first push.</summary>

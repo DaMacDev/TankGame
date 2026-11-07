@@ -71,6 +71,116 @@ public class NetArena3DSceneTests : TestClass
     }
 
     [Test]
+    public void TheHud_CountsEnemies_ThenPointsAtThemAfterAQuietSpell_AndStopsWhenHit()
+    {
+        TankGame.Infrastructure.TranslationLoader.EnsureLoaded();
+        _transport.DeliverWelcome(1);
+        void Snapshot(uint tick, byte ownHp) => _transport.DeliverSnapshot(new SnapshotFrame(tick, 0,
+            new List<TankState>
+            {
+                new(0, 96f, 160f, 0f, 0f, 8, 0),
+                new(1, 2000f, 2000f, 0f, 0f, ownHp, 1),
+                new(2, 3000f, 160f, 0f, 0f, 0, 2),
+            },
+            new List<WallDelta>()));
+        Snapshot(1, 8);
+        _scene.Tick(0.1f);
+
+        var label = _scene.FindChild("EnemiesLeft", recursive: true, owned: false) as Label
+            ?? throw new Exception("The net arena must show the alive-enemies counter.");
+        if (!label.Text.Contains('1'))
+        {
+            throw new Exception($"One enemy lives and one is out; the counter showed '{label.Text}'.");
+        }
+
+        var arrow = _scene.FindChild("EnemyArrow0", recursive: true, owned: false) as Node2D
+            ?? throw new Exception("The net arena must have enemy arrows.");
+        if (arrow.Visible)
+        {
+            throw new Exception("No arrow until the player has gone a while without fighting.");
+        }
+
+        for (var i = 0; i < 20; i++)
+        {
+            _scene.Tick(0.5f);
+        }
+
+        if (!arrow.Visible)
+        {
+            throw new Exception("A quiet spell must bring the arrow up.");
+        }
+
+        Snapshot(2, 5);
+        _scene.Tick(0.1f);
+        if (arrow.Visible)
+        {
+            throw new Exception("Taking a hit means fighting; the arrow must go.");
+        }
+    }
+
+    // Seen in a real run: a seat spawned on a plateau cell while tanks start on the ground layer, so the
+    // tank sat inside the plateau, invisible and unable to move.
+    [Test]
+    public void OnCliffs_EverySeatStartsOnGroundItCanDriveOn()
+    {
+        NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 0, 0,
+            new List<LobbyPlayer> { new(0, "Ada", 0, true, true) }, "CliffsAndValleys");
+        var grid = TankGame.GameLogic.CliffsArena.Create().Map.BuildGrid();
+
+        for (var seed = 0; seed < 8; seed++)
+        {
+            NetworkSession.StartedLobby = NetworkSession.StartedLobby with { Seed = seed * 1000 };
+            NetworkSession.LocalSlot = 0;
+            var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
+                .Instantiate<NetArena3DScene>();
+            TestScene.AddChild(scene);
+            try
+            {
+                foreach (var (slot, tank) in scene.Tanks)
+                {
+                    var x = (int)(tank.Position.X / 64f);
+                    var y = (int)(tank.Position.Y / 64f);
+                    if (grid.IsBlocked(x, y) || grid.LayerAt(x, y) != tank.Layer)
+                    {
+                        throw new Exception(
+                            $"Seed {seed}: seat {slot} on layer {tank.Layer} starts in cell ({x},{y}) of layer {grid.LayerAt(x, y)}.");
+                    }
+                }
+            }
+            finally
+            {
+                scene.Free();
+            }
+        }
+    }
+
+    // The relay routes guest input to the lobby's host seat. If that seat is not slot 0 (the creator
+    // left and the role moved on), it must still run the authority, or no client simulates anything.
+    [Test]
+    public void TheLobbyHostSeat_RunsTheMatch_EvenWhenItIsNotSlotZero()
+    {
+        NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
+            new List<LobbyPlayer> { new(1, "Bea", 1, true, true), new(2, "Cid", 2, true, true) });
+        NetworkSession.LocalSlot = 1;
+        var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
+            .Instantiate<NetArena3DScene>();
+        TestScene.AddChild(scene);
+
+        try
+        {
+            scene.Tick(0.05f);
+            if (_transport.Broadcast.Count == 0)
+            {
+                throw new Exception("The host seat must broadcast snapshots whichever slot it sits in.");
+            }
+        }
+        finally
+        {
+            scene.Free();
+        }
+    }
+
+    [Test]
     public void GuestWelcome_AdoptsTheSlot_AndShowsItsOwnTank()
     {
         _transport.DeliverWelcome(1);
@@ -349,6 +459,20 @@ public class NetArena3DSceneTests : TestClass
         }
     }
 
+    // The authority decides a round from its own world: every tank but the survivor falls.
+    private static void DecideRoundFor(NetArena3DScene scene, byte survivor)
+    {
+        foreach (var (slot, tank) in scene.Tanks)
+        {
+            if (slot != survivor)
+            {
+                tank.TakeDamage(tank.Hp + tank.Shield);
+            }
+        }
+
+        scene.Tick(0.06f);
+    }
+
     // Online rematch: once the round is decided, the LOBBY host (and only the host) gets a Rematch
     // button beside Leave; pressing it sends the rematch lobby command over the same socket.
     [Test]
@@ -356,7 +480,7 @@ public class NetArena3DSceneTests : TestClass
     {
         NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
             new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true) });
-        NetworkSession.LocalSlot = 1; // this client is the lobby host (slot 1), playing as a guest
+        NetworkSession.LocalSlot = 1; // this client sits in the lobby's host seat, so it runs the match
         var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
             .Instantiate<NetArena3DScene>();
         TestScene.AddChild(scene);
@@ -370,10 +494,7 @@ public class NetArena3DSceneTests : TestClass
                 throw new Exception("Rematch must stay hidden while the round is being fought.");
             }
 
-            // Bea (slot 1) falls — the round is decided.
-            _transport.DeliverSnapshot(new SnapshotFrame(1, 0,
-                new List<TankState> { new(0, 96f, 160f, 0f, 0f, 8, 0), new(1, 200f, 96f, 0f, 0f, 0, 1) },
-                new List<WallDelta>()));
+            DecideRoundFor(scene, survivor: 1);
 
             if (!rematch.Visible)
             {
@@ -520,7 +641,7 @@ public class NetArena3DSceneTests : TestClass
     {
         NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
             new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true) });
-        NetworkSession.LocalSlot = 1; // this client is the lobby host (slot 1), playing as a guest
+        NetworkSession.LocalSlot = 1; // this client sits in the lobby's host seat, so it runs the match
         var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
             .Instantiate<NetArena3DScene>();
         TestScene.AddChild(scene);
@@ -528,13 +649,11 @@ public class NetArena3DSceneTests : TestClass
         try
         {
             // Bea (slot 1) falls — the round is decided.
-            _transport.DeliverSnapshot(new SnapshotFrame(1, 0,
-                new List<TankState> { new(0, 96f, 160f, 0f, 0f, 8, 0), new(1, 200f, 96f, 0f, 0f, 0, 1) },
-                new List<WallDelta>()));
+            DecideRoundFor(scene, survivor: 1);
 
             var winner = scene.FindChild("WinnerName", recursive: true, owned: false) as Label
                 ?? throw new Exception("The victory screen must show on the lobby host.");
-            if (winner.Text != "Ada")
+            if (winner.Text != "Bea")
             {
                 throw new Exception($"The ribbon must carry the roster name of the survivor; got '{winner.Text}'.");
             }

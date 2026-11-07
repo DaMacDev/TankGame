@@ -27,6 +27,25 @@ public class GridPathfinderTests
     }
 
     [Fact]
+    public void ACliffFace_BlocksARoute_UnlessARampJoinsTheLayers()
+    {
+        var materials = new CellMaterial[5, 3];
+        var layers = new int[5, 3];
+        for (var x = 0; x < 5; x++)
+        {
+            layers[x, 0] = 1; // the whole top row is a plateau
+        }
+
+        var noRamp = WallGrid.FromMaterials(materials, layers);
+        Assert.Empty(GridPathfinder.FindPath(noRamp, (0, 2), (0, 0)));
+
+        var ramps = new bool[5, 3];
+        ramps[4, 1] = true;
+        var withRamp = WallGrid.FromMaterials(materials, layers, ramps);
+        Assert.Contains((4, 1), GridPathfinder.FindPath(withRamp, (0, 2), (0, 0)));
+    }
+
+    [Fact]
     public void ReturnsJustTheStart_WhenStartEqualsGoal()
     {
         var grid = Grid(

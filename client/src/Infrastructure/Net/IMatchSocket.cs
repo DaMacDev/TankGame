@@ -14,4 +14,7 @@ public interface IMatchSocket
     /// <summary>Pumps socket I/O and returns the binary messages received since the previous call,
     /// in arrival order (empty if none).</summary>
     IReadOnlyList<byte[]> Poll();
+
+    /// <summary>Closes the connection.</summary>
+    void Close();
 }

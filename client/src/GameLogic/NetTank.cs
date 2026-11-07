@@ -27,6 +27,9 @@ public sealed class NetTank : ITank
 
     public bool IsAlive => true;
 
+    /// <summary>Online tanks have a single life, so a tank at zero hit points is out for good.</summary>
+    public int LivesRemaining => Hp > 0 ? 1 : 0;
+
     public void Step(float deltaSeconds) { }
 
     public void TakeDamage(int amount) { }

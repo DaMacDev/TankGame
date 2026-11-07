@@ -9,6 +9,9 @@
 // and the relay cap all size themselves off this one constant.
 export const MAX_PLAYERS = 8;
 export const COUNTDOWN_SECONDS = 3;
+// A phone can take a while to build the arena, but a player who never reports in (a tab sent to the
+// background keeps its socket open) must not hold everyone else on the loading banner forever.
+export const LOADING_TIMEOUT_SECONDS = 45;
 
 // 1, not 2: pressing Start fills every empty seat with an AI tank (owner ask), so a lone player
 // starting a room is a real match, not a stall.
@@ -50,6 +53,7 @@ export type LobbyCommand =
   | { type: "start"; slot: number }
   | { type: "rematch"; slot: number }
   | { type: "loaded"; slot: number }
+  | { type: "loadingTimeout" }
   | { type: "tick" };
 
 export function emptyLobby(mode: GameMode = "ffa", map = ""): LobbyState {
@@ -80,8 +84,12 @@ export function reduce(state: LobbyState, command: LobbyCommand): LobbyState {
       return rematch(state, command.slot);
     case "loaded":
       return markLoaded(state, command.slot);
+    case "loadingTimeout":
+      return state.phase === "loading" ? { ...state, phase: "started" } : state;
     case "tick":
       return tick(state);
+    default:
+      return state; // the wire can carry anything; an unknown command must never lose the room state
   }
 }
 

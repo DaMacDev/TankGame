@@ -15,12 +15,14 @@ import {
   decodeLobbyJson,
   MSG_LOBBY_CMD,
   MSG_INPUT,
+  MSG_SNAPSHOT,
   INPUT_FRAME_SIZE,
 } from "./protocol/codec";
 import {
   emptyLobby,
   reduce,
   MAX_PLAYERS,
+  LOADING_TIMEOUT_SECONDS,
   type LobbyState,
   type LobbyCommand,
 } from "./lobbyState";
@@ -29,6 +31,11 @@ import { publishToDirectory } from "./lobbyDirectory";
 const LOBBY_KEY = "lobby";
 const CODE_KEY = "code";
 const TICK_MS = 1000;
+
+// What a client may ask for. "join" and "leave" follow the socket; "tick" and "loadingTimeout" belong
+// to the alarm. Anything else from a socket is dropped, so a client can't skip the countdown or the
+// loading handshake, or leave a ghost seat behind.
+const CLIENT_COMMANDS = new Set(["setName", "setReady", "setTeam", "setMode", "setMap", "start", "rematch", "loaded"]);
 
 interface Attachment {
   slot: number;
@@ -98,13 +105,25 @@ export class MatchRoom implements DurableObject {
       // A lobby command is consumed here, never relayed. The sender's real slot is stamped over
       // whatever the client sent, so a client can only ever act as itself.
       const command = decodeLobbyJson<LobbyCommand>(bytes);
-      await this.apply({ ...command, slot: slotOf(sender) } as LobbyCommand);
+      if (CLIENT_COMMANDS.has(command.type)) {
+        await this.apply({ ...command, slot: slotOf(sender) } as LobbyCommand);
+      }
+      return;
+    }
+
+    // Only the host sends snapshots and only guests send inputs. Anything else (a forged lobby state,
+    // say, which would throw the host back to the room) goes no further.
+    const senderIsHost = slotOf(sender) === this.lobby.hostSlot;
+    if (bytes[0] !== (senderIsHost ? MSG_SNAPSHOT : MSG_INPUT)) {
       return;
     }
 
     // Same authority rule for game inputs: the sender's real slot is stamped over the frame's
     // last byte (placed there so no decode is needed), so the host attributes it correctly.
-    if (bytes[0] === MSG_INPUT && bytes.length >= 1 + INPUT_FRAME_SIZE) {
+    if (bytes[0] === MSG_INPUT) {
+      if (bytes.length < 1 + INPUT_FRAME_SIZE) {
+        return;
+      }
       bytes[INPUT_FRAME_SIZE] = slotOf(sender);
     }
 
@@ -129,24 +148,36 @@ export class MatchRoom implements DurableObject {
   // The DO alarm drives the start countdown one second at a time, so every client ticks in lockstep
   // from the broadcast state. It reschedules itself until the countdown reaches "started".
   async alarm(): Promise<void> {
-    await this.apply({ type: "tick" });
+    await this.apply(this.lobby.phase === "loading" ? { type: "loadingTimeout" } : { type: "tick" });
   }
 
   // Run one command through the pure reducer, persist, push the new state to all members, and keep
   // the countdown alarm scheduled exactly while the lobby is counting down.
   private async apply(command: LobbyCommand): Promise<void> {
+    const previousPhase = this.lobby.phase;
     this.lobby = reduce(this.lobby, command);
     await this.state.storage.put(LOBBY_KEY, this.lobby);
     this.broadcast();
 
-    // Keep this room's entry in the lobby browser in step with its joinability.
-    if (this.code !== "") {
-      const directory = this.env.LOBBY_DIRECTORY.get(this.env.LOBBY_DIRECTORY.idFromName("global"));
-      await publishToDirectory(directory, this.lobby, this.code);
+    // Before the directory call: if that fails, the room must still count down rather than stay locked.
+    // Armed only on entry and by the alarm's own tick: re-arming on every command would let a chatty
+    // client keep pushing the next tick back and freeze the countdown.
+    if (this.lobby.phase === "countdown" && (previousPhase !== "countdown" || command.type === "tick")) {
+      await this.state.storage.setAlarm(Date.now() + TICK_MS);
+    } else if (this.lobby.phase === "loading" && previousPhase !== "loading") {
+      await this.state.storage.setAlarm(Date.now() + LOADING_TIMEOUT_SECONDS * 1000);
     }
 
-    if (this.lobby.phase === "countdown") {
-      await this.state.storage.setAlarm(Date.now() + TICK_MS);
+    // Keep this room's entry in the lobby browser in step with its joinability.
+    if (this.code !== "") {
+      // The browser list is a convenience. A failure here must not fail the join or make the platform
+      // retry the alarm, which would run a tick or the loading timeout twice.
+      try {
+        const directory = this.env.LOBBY_DIRECTORY.get(this.env.LOBBY_DIRECTORY.idFromName("global"));
+        await publishToDirectory(directory, this.lobby, this.code);
+      } catch (error) {
+        console.error("lobby directory publish failed", error);
+      }
     }
   }
 

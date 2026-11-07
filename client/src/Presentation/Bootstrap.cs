@@ -28,6 +28,13 @@ public partial class Bootstrap : Node
             return;
         }
 #endif
+#if NET_E2E
+        if (TankGame.Tests.Presentation.NetE2EDriver.TryStart(GetTree()))
+        {
+            TranslationLoader.EnsureLoaded();
+            return;
+        }
+#endif
         // App init happens once here (the composition root), then the play scene loads.
 #if !GODOT_WEB
         SentryBootstrap.Init(); // Sentry's .NET SDK isn't WASM-compatible; web builds skip it.
