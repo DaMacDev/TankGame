@@ -69,6 +69,9 @@ public partial class NetArena3DScene : Node3D
     private bool _awaitingStart;
     private bool _returningToRoom;
 
+    /// <summary>The host disconnected, so the match is over for this guest and only Leave remains.</summary>
+    public bool HostLeft { get; private set; }
+
     // The seating plan from the lobby's final roster (placeholder-named AI on empty seats), the
     // seeded spawn table both roles derive identically, and the host's authoritative round state.
     private IReadOnlyList<NetRoster.Seat> _roster = System.Array.Empty<NetRoster.Seat>();
@@ -245,7 +248,40 @@ public partial class NetArena3DScene : Node3D
         if (view.Phase == LobbyPhase.Waiting)
         {
             ReturnToRoom(view);
+            return;
         }
+
+        // The relay moves the host seat when the host disconnects, but only the original host's machine
+        // was simulating, so the match can't go on. A decided round already has its own Leave.
+        if (!HostLeft && _victory is null && NetworkSession.StartedLobby is { } started && view.HostSlot != started.HostSlot)
+        {
+            ShowHostLeft();
+        }
+    }
+
+    private void ShowHostLeft()
+    {
+        HostLeft = true;
+        _leaveLayer.Visible = false;
+        _matchHud.Visible = false;
+
+        var message = new Label { Text = "net.host_left", HorizontalAlignment = HorizontalAlignment.Center };
+        message.AddThemeFontSizeOverride("font_size", 28);
+        var leave = new Button { Name = "HostLeftLeave", Text = "net.leave", CustomMinimumSize = new Vector2(200f, 64f) };
+        leave.Pressed += LeaveMatch;
+        var rows = new VBoxContainer();
+        rows.AddThemeConstantOverride("separation", 16);
+        rows.AddChild(message);
+        rows.AddChild(leave);
+        var card = new PanelContainer { Name = "HostLeftCard" };
+        card.AddChild(rows);
+        var centre = new CenterContainer();
+        centre.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        centre.AddChild(card);
+        var layer = new CanvasLayer { Name = "HostLeftLayer", Layer = 4 };
+        layer.AddChild(centre);
+        AddChild(layer);
+        leave.GrabFocus();
     }
 
     private void ReturnToRoom(LobbyView view)
@@ -330,7 +366,7 @@ public partial class NetArena3DScene : Node3D
         _transport.Poll();
 
         // A rematch push swaps the scene from inside Poll; this one is on its way out.
-        if (_returningToRoom)
+        if (_returningToRoom || HostLeft)
         {
             return;
         }

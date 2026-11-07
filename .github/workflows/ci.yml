@@ -117,6 +117,10 @@ jobs:
         run: godot --headless --path client --import
       - name: Run three players through a real match
         run: node scripts/net-e2e.mjs 3 CliffsAndValleys # layered terrain: the hardest map to spawn on
+      - name: Host quits, guests are told
+        run: node scripts/net-e2e.mjs 3
+        env:
+          NET_E2E_HOST_QUITS: "1"
 
   worker-test:
     needs: changes

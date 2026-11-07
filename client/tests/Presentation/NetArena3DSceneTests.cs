@@ -549,6 +549,53 @@ public class NetArena3DSceneTests : TestClass
         }
     }
 
+    // The host's machine is the only one simulating: when its seat moves, the guests must be told, stop
+    // sending input to nobody, and get a way out.
+    [Test]
+    public void TheHostLeaving_EndsTheMatchForGuests_WithAWayOut()
+    {
+        NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 0, 0,
+            new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true), new(2, "Cid", 2, true, true) });
+        NetworkSession.LocalSlot = 1;
+        var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
+            .Instantiate<NetArena3DScene>();
+        TestScene.AddChild(scene);
+
+        try
+        {
+            _transport.DeliverLobby(new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 0, 0,
+                new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true) }));
+            if (scene.HostLeft)
+            {
+                throw new Exception("Another guest leaving must not end the match.");
+            }
+
+            _transport.DeliverLobby(new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
+                new List<LobbyPlayer> { new(1, "Bea", 1, true, true), new(2, "Cid", 2, true, true) }));
+            if (!scene.HostLeft || scene.FindChild("HostLeftCard", true, false) is not PanelContainer)
+            {
+                throw new Exception("Guests must be told the host left.");
+            }
+
+            _transport.SentInputs.Clear();
+            scene.Tick(0.2f);
+            if (_transport.SentInputs.Count != 0)
+            {
+                throw new Exception("With no host, a guest must stop sending input.");
+            }
+
+            scene.FindChild("HostLeftLeave", true, false).EmitSignal(Button.SignalName.Pressed);
+            if (NetworkSession.Active is not null)
+            {
+                throw new Exception("Leave must drop the session.");
+            }
+        }
+        finally
+        {
+            scene.Free();
+        }
+    }
+
     // The real end of a networked match (net victory screen): a GUEST whose deciding snapshot
     // arrives must show the full victory screen v2 — the winner's ribbon, the standing sheet ranked
     // from the hp stream it observed, and a Leave button on the card — with the corner buttons
