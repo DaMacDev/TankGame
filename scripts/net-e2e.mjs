@@ -2,7 +2,8 @@
 // Real-socket multiplayer check: a local worker plus N headless game processes that create, join
 // and start a match through the real scenes, then report whether every tank spawned and moved.
 // Usage: node scripts/net-e2e.mjs [humans=3] [mapId=random]   (env GODOT = engine binary, default "godot";
-// env NET_E2E_SHOT = path prefix: runs the host in a window and saves a screenshot of the match)
+// env NET_E2E_SHOT = path prefix: runs the host in a window and saves a screenshot of the match;
+// env NET_E2E_HOST_QUITS = 1: the host quits after the check, and guests must be told)
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +15,7 @@ const humans = Number(process.argv[2] ?? 3);
 const map = process.argv[3];
 const godot = process.env.GODOT ?? "godot";
 const shot = process.env.NET_E2E_SHOT;
+const hostQuits = process.env.NET_E2E_HOST_QUITS === "1";
 const port = 8787 + Math.floor(Math.random() * 1000);
 const worker = `http://127.0.0.1:${port}`;
 const work = mkdtempSync(path.join(tmpdir(), "net-e2e-"));
@@ -50,6 +52,7 @@ function runPlayer(role, index) {
       ...(shot && role === "host" ? [] : ["--headless"]), "--path", path.join(root, "client"), "--",
       ...(shot && role === "host" ? [`--net-e2e-shot=${shot}`] : []),
       ...(map ? [`--net-e2e-map=${map}`] : []),
+      ...(hostQuits ? ["--net-e2e-host-quits=1"] : []),
       `--net-e2e-role=${role}`, `--net-e2e-worker=${worker}`, `--net-e2e-humans=${humans}`,
       `--net-e2e-code-file=${path.join(work, "code.txt")}`, `--net-e2e-out=${out}`,
     ],

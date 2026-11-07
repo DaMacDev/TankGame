@@ -28,6 +28,7 @@ public partial class NetE2EDriver : Node
     private readonly int _humans;
     private readonly string? _shotPrefix;
     private readonly string? _map;
+    private readonly bool _hostQuits;
     private readonly Dictionary<string, object> _report = new();
     private readonly Dictionary<byte, System.Numerics.Vector2> _firstSeen = new();
     private readonly Dictionary<byte, float> _farthest = new();
@@ -42,10 +43,11 @@ public partial class NetE2EDriver : Node
     private bool _arrowShot;
     private string? _createdCode;
 
-    private NetE2EDriver(string role, string worker, string codeFile, string outFile, int humans, string? shotPrefix, string? map)
+    private NetE2EDriver(string role, string worker, string codeFile, string outFile, int humans, string? shotPrefix, string? map, bool hostQuits)
     {
         _shotPrefix = shotPrefix;
         _map = map;
+        _hostQuits = hostQuits;
         _role = role;
         _worker = worker;
         _codeFile = codeFile;
@@ -76,7 +78,8 @@ public partial class NetE2EDriver : Node
         var driver = new NetE2EDriver(
             role, args["--net-e2e-worker"], args["--net-e2e-code-file"], args["--net-e2e-out"],
             int.Parse(args["--net-e2e-humans"], CultureInfo.InvariantCulture),
-            args.GetValueOrDefault("--net-e2e-shot"), args.GetValueOrDefault("--net-e2e-map")) { Name = "NetE2EDriver" };
+            args.GetValueOrDefault("--net-e2e-shot"), args.GetValueOrDefault("--net-e2e-map"),
+            args.ContainsKey("--net-e2e-host-quits")) { Name = "NetE2EDriver" };
         tree.Root.CallDeferred(Node.MethodName.AddChild, driver);
         return true;
     }
@@ -230,7 +233,10 @@ public partial class NetE2EDriver : Node
             SaveScreenshot("arrow");
         }
 
-        if (_playing >= PlaySeconds)
+        // The host's report makes it quit. In that scenario a guest passes only once it has been told,
+        // or once the round was already decided (its victory card has its own Leave).
+        var hasWayOut = arena.HostLeft || arena.FindChild("GameOverLayer", true, false) is not null;
+        if (_playing >= PlaySeconds && (!_hostQuits || _role == "host" || hasWayOut))
         {
             SaveScreenshot("end");
             Judge(arena);

@@ -31,6 +31,9 @@ public partial class NetArena3DScene : Node3D
     private const float PickupRadius = 28f;
     private const int TankMaxHp = 8;
     private const byte DefaultHostSlot = 0; // a session with no lobby (old 2-player tests)
+    // The host sends 20 snapshots a second. A phone sent to the home screen keeps its socket open, so the
+    // relay never says the host left: this long without one means the match is over for the guests.
+    private const float HostSilenceSeconds = 5f;
     private const float TeleportPadRadius = 40f; // a tank centred within this of a pad warps (as solo)
 
     private static readonly NVector2 GridOrigin = NVector2.Zero;
@@ -68,6 +71,11 @@ public partial class NetArena3DScene : Node3D
     // (every seated player loaded). A session with no lobby (old 2-player tests) plays immediately.
     private bool _awaitingStart;
     private bool _returningToRoom;
+
+    /// <summary>The host disconnected, so the match is over for this guest and only Leave remains.</summary>
+    public bool HostLeft { get; private set; }
+
+    private float _sinceSnapshot;
 
     // The seating plan from the lobby's final roster (placeholder-named AI on empty seats), the
     // seeded spawn table both roles derive identically, and the host's authoritative round state.
@@ -245,7 +253,53 @@ public partial class NetArena3DScene : Node3D
         if (view.Phase == LobbyPhase.Waiting)
         {
             ReturnToRoom(view);
+            return;
         }
+
+        // The relay moves the host seat when the host disconnects, but only the original host's machine
+        // was simulating, so the match can't go on. A decided round already has its own Leave.
+        if (!HostLeft && _victory is null && NetworkSession.StartedLobby is { } started && view.HostSlot != started.HostSlot)
+        {
+            ShowHostLeft();
+        }
+    }
+
+    private void ShowHostLeft()
+    {
+        HostLeft = true;
+        _leaveLayer.Visible = false;
+        _status.Visible = false;
+        _matchHud.Visible = false;
+
+        var message = new Label { Text = "net.host_left", HorizontalAlignment = HorizontalAlignment.Center };
+        message.AddThemeFontSizeOverride("font_size", 28);
+        var leave = new Button { Name = "HostLeftLeave", Text = "net.leave", CustomMinimumSize = new Vector2(200f, 64f) };
+        leave.Pressed += LeaveMatch;
+        var rows = new VBoxContainer();
+        rows.AddThemeConstantOverride("separation", 16);
+        rows.AddChild(message);
+        rows.AddChild(leave);
+        var card = new PanelContainer { Name = "HostLeftCard" };
+        card.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0f, 0f, 0f, 0.85f),
+            ContentMarginLeft = 32f,
+            ContentMarginRight = 32f,
+            ContentMarginTop = 24f,
+            ContentMarginBottom = 24f,
+            CornerRadiusBottomLeft = 12,
+            CornerRadiusBottomRight = 12,
+            CornerRadiusTopLeft = 12,
+            CornerRadiusTopRight = 12,
+        });
+        card.AddChild(rows);
+        var centre = new CenterContainer();
+        centre.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        centre.AddChild(card);
+        var layer = new CanvasLayer { Name = "HostLeftLayer", Layer = 4 };
+        layer.AddChild(centre);
+        AddChild(layer);
+        leave.GrabFocus();
     }
 
     private void ReturnToRoom(LobbyView view)
@@ -330,7 +384,7 @@ public partial class NetArena3DScene : Node3D
         _transport.Poll();
 
         // A rematch push swaps the scene from inside Poll; this one is on its way out.
-        if (_returningToRoom)
+        if (_returningToRoom || HostLeft)
         {
             return;
         }
@@ -349,6 +403,12 @@ public partial class NetArena3DScene : Node3D
 
         FollowLocalTank();
         RefreshHud(delta);
+
+        _sinceSnapshot += delta;
+        if (_session is null && _victory is null && _sinceSnapshot > HostSilenceSeconds)
+        {
+            ShowHostLeft();
+        }
     }
 
     private void RefreshHud(float delta)
@@ -642,6 +702,8 @@ public partial class NetArena3DScene : Node3D
         {
             return; // the host is the authority — it never consumes snapshots
         }
+
+        _sinceSnapshot = 0f;
 
         _predicted?.Reconcile(snapshot);
 

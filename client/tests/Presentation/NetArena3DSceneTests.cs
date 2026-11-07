@@ -102,6 +102,7 @@ public class NetArena3DSceneTests : TestClass
 
         for (var i = 0; i < 20; i++)
         {
+            Snapshot((uint)(10 + i), 8); // a quiet match: the host still sends, nothing changes
             _scene.Tick(0.5f);
         }
 
@@ -546,6 +547,80 @@ public class NetArena3DSceneTests : TestClass
         finally
         {
             scene.Free();
+        }
+    }
+
+    // The host's machine is the only one simulating: when its seat moves, the guests must be told, stop
+    // sending input to nobody, and get a way out.
+    [Test]
+    public void TheHostLeaving_EndsTheMatchForGuests_WithAWayOut()
+    {
+        NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 0, 0,
+            new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true), new(2, "Cid", 2, true, true) });
+        NetworkSession.LocalSlot = 1;
+        var scene = GD.Load<PackedScene>("res://src/Presentation/Arena/NetArena3D.tscn")
+            .Instantiate<NetArena3DScene>();
+        TestScene.AddChild(scene);
+
+        try
+        {
+            _transport.DeliverLobby(new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 0, 0,
+                new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true) }));
+            if (scene.HostLeft)
+            {
+                throw new Exception("Another guest leaving must not end the match.");
+            }
+
+            _transport.DeliverLobby(new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
+                new List<LobbyPlayer> { new(1, "Bea", 1, true, true), new(2, "Cid", 2, true, true) }));
+            if (!scene.HostLeft || scene.FindChild("HostLeftCard", true, false) is not PanelContainer)
+            {
+                throw new Exception("Guests must be told the host left.");
+            }
+
+            _transport.SentInputs.Clear();
+            scene.Tick(0.2f);
+            if (_transport.SentInputs.Count != 0)
+            {
+                throw new Exception("With no host, a guest must stop sending input.");
+            }
+
+            scene.FindChild("HostLeftLeave", true, false).EmitSignal(Button.SignalName.Pressed);
+            if (NetworkSession.Active is not null)
+            {
+                throw new Exception("Leave must drop the session.");
+            }
+        }
+        finally
+        {
+            scene.Free();
+        }
+    }
+
+    // A host phone sent to the home screen keeps its socket, so no lobby push ever comes: the
+    // guests must notice the snapshots stopped.
+    [Test]
+    public void GuestHearingNothingFromTheHost_IsToldTheMatchIsOver()
+    {
+        _transport.DeliverWelcome(1);
+        for (var i = 0; i < 80; i++)
+        {
+            _scene.Tick(0.05f);
+        }
+
+        if (_scene.HostLeft)
+        {
+            throw new Exception("Four quiet seconds must not end the match yet.");
+        }
+
+        for (var i = 0; i < 30; i++)
+        {
+            _scene.Tick(0.05f);
+        }
+
+        if (!_scene.HostLeft)
+        {
+            throw new Exception("A guest that hears nothing from the host for over 5 s must be told.");
         }
     }
 
