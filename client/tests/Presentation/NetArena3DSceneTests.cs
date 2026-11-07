@@ -102,6 +102,7 @@ public class NetArena3DSceneTests : TestClass
 
         for (var i = 0; i < 20; i++)
         {
+            Snapshot((uint)(10 + i), 8); // a quiet match: the host still sends, nothing changes
             _scene.Tick(0.5f);
         }
 
@@ -593,6 +594,33 @@ public class NetArena3DSceneTests : TestClass
         finally
         {
             scene.Free();
+        }
+    }
+
+    // A host phone sent to the home screen keeps its socket, so no lobby push ever comes: the
+    // guests must notice the snapshots stopped.
+    [Test]
+    public void GuestHearingNothingFromTheHost_IsToldTheMatchIsOver()
+    {
+        _transport.DeliverWelcome(1);
+        for (var i = 0; i < 80; i++)
+        {
+            _scene.Tick(0.05f);
+        }
+
+        if (_scene.HostLeft)
+        {
+            throw new Exception("Four quiet seconds must not end the match yet.");
+        }
+
+        for (var i = 0; i < 30; i++)
+        {
+            _scene.Tick(0.05f);
+        }
+
+        if (!_scene.HostLeft)
+        {
+            throw new Exception("A guest that hears nothing from the host for over 5 s must be told.");
         }
     }
 

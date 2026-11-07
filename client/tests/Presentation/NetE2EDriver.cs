@@ -233,8 +233,10 @@ public partial class NetE2EDriver : Node
             SaveScreenshot("arrow");
         }
 
-        // The host's report makes it quit. In that scenario a guest passes only once it has been told.
-        if (_playing >= PlaySeconds && (!_hostQuits || _role == "host" || arena.HostLeft))
+        // The host's report makes it quit. In that scenario a guest passes only once it has been told,
+        // or once the round was already decided (its victory card has its own Leave).
+        var hasWayOut = arena.HostLeft || arena.FindChild("GameOverLayer", true, false) is not null;
+        if (_playing >= PlaySeconds && (!_hostQuits || _role == "host" || hasWayOut))
         {
             SaveScreenshot("end");
             Judge(arena);

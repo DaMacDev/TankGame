@@ -31,6 +31,9 @@ public partial class NetArena3DScene : Node3D
     private const float PickupRadius = 28f;
     private const int TankMaxHp = 8;
     private const byte DefaultHostSlot = 0; // a session with no lobby (old 2-player tests)
+    // The host sends 20 snapshots a second. A phone sent to the home screen keeps its socket open, so the
+    // relay never says the host left: this long without one means the match is over for the guests.
+    private const float HostSilenceSeconds = 5f;
     private const float TeleportPadRadius = 40f; // a tank centred within this of a pad warps (as solo)
 
     private static readonly NVector2 GridOrigin = NVector2.Zero;
@@ -71,6 +74,8 @@ public partial class NetArena3DScene : Node3D
 
     /// <summary>The host disconnected, so the match is over for this guest and only Leave remains.</summary>
     public bool HostLeft { get; private set; }
+
+    private float _sinceSnapshot;
 
     // The seating plan from the lobby's final roster (placeholder-named AI on empty seats), the
     // seeded spawn table both roles derive identically, and the host's authoritative round state.
@@ -263,6 +268,7 @@ public partial class NetArena3DScene : Node3D
     {
         HostLeft = true;
         _leaveLayer.Visible = false;
+        _status.Visible = false;
         _matchHud.Visible = false;
 
         var message = new Label { Text = "net.host_left", HorizontalAlignment = HorizontalAlignment.Center };
@@ -397,6 +403,12 @@ public partial class NetArena3DScene : Node3D
 
         FollowLocalTank();
         RefreshHud(delta);
+
+        _sinceSnapshot += delta;
+        if (_session is null && _victory is null && _sinceSnapshot > HostSilenceSeconds)
+        {
+            ShowHostLeft();
+        }
     }
 
     private void RefreshHud(float delta)
@@ -690,6 +702,8 @@ public partial class NetArena3DScene : Node3D
         {
             return; // the host is the authority — it never consumes snapshots
         }
+
+        _sinceSnapshot = 0f;
 
         _predicted?.Reconcile(snapshot);
 
