@@ -156,7 +156,7 @@ public class ProtocolCodecTests
         var frame = new SnapshotFrame(
             Tick: 2,
             Acks: new List<InputAck> { new(Slot: 1, Seq: 1) },
-            Tanks: new List<TankState> { new(Slot: 0, X: 64f, Y: 128f, Rotation: 0f, TurretRotation: 0.5f, Hp: 3, Team: 1, Shield: 0, Layer: 0) },
+            Tanks: new List<TankState> { new(Slot: 0, X: 64f, Y: 128f, Rotation: 0f, TurretRotation: 0.5f, Hp: 3, Team: 1, Shield: 0, Layer: 0, Lives: 5) },
             WallDeltas: new List<WallDelta> { new(CellX: 5, CellY: 6, Material: 1, Hp: 2) },
             Projectiles: new List<ProjectileState>());
 
@@ -185,6 +185,8 @@ public class ProtocolCodecTests
             0x02,                   // hp = 2
             0x00, 0x00,             // projectileCount = 0
             0x00,                   // powerupCount = 0
+            0x01,                   // livesCount = 1
+            0x05,                   // lives = 5
         }, bytes);
     }
 
@@ -208,6 +210,25 @@ public class ProtocolCodecTests
         var decoded = ProtocolCodec.DecodeSnapshot(ProtocolCodec.EncodeSnapshot(original));
 
         Assert.Equal(original.Powerups, decoded.Powerups);
+    }
+
+    [Fact]
+    public void SnapshotFrame_RoundTrips_TankLives()
+    {
+        var original = new SnapshotFrame(
+            Tick: 3,
+            Acks: new List<InputAck>(),
+            Tanks: new List<TankState>
+            {
+                new(0, 1f, 2f, 0f, 0f, 0, 0, 0, 0, Lives: 4), // down, waiting to respawn
+                new(1, 3f, 4f, 0f, 0f, 8, 1, 0, 0, Lives: 6),
+            },
+            WallDeltas: new List<WallDelta>(),
+            Projectiles: new List<ProjectileState>());
+
+        var decoded = ProtocolCodec.DecodeSnapshot(ProtocolCodec.EncodeSnapshot(original));
+
+        Assert.Equal(original.Tanks, decoded.Tanks);
     }
 
     [Fact]
@@ -257,6 +278,7 @@ public class ProtocolCodecTests
             0x05, 0x00,             // cellX = 5
             0x09, 0x00,             // cellY = 9
             0x01,                   // available = 1
+            0x00,                   // livesCount = 0
         }, ProtocolCodec.EncodeSnapshot(frame));
     }
 }

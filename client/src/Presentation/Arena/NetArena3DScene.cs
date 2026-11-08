@@ -90,6 +90,7 @@ public partial class NetArena3DScene : Node3D
     private VictoryScreen? _victory;
     private CanvasLayer _leaveLayer = null!;
     private MatchHud _matchHud = null!;
+    private RespawnHud _respawnHud = null!;
     private readonly List<ITank> _hudTanks = new();
 
     /// <summary>The decided round (FFA: last tank standing; Team: last team standing). The host
@@ -213,6 +214,8 @@ public partial class NetArena3DScene : Node3D
         BuildLeaveButton();
         _matchHud = new MatchHud { Name = "MatchHud" };
         AddChild(_matchHud);
+        _respawnHud = new RespawnHud { Name = "RespawnHud" };
+        AddChild(_respawnHud);
 
         _transport.WelcomeReceived += OnWelcome;
         _transport.SnapshotReceived += OnSnapshot;
@@ -241,16 +244,25 @@ public partial class NetArena3DScene : Node3D
     // players loaded, or the last laggard left — server-side) releases the match to run.
     private void OnLobbyState(LobbyView view)
     {
+        // On the way back to the room: one Poll can deliver countdown, loading and started together,
+        // so keep handing the newest view on — the room picks up from wherever the server is.
+        if (_returningToRoom)
+        {
+            NetworkSession.StartedLobby = view;
+            return;
+        }
+
         if (_awaitingStart && view.Phase == LobbyPhase.Started)
         {
             _awaitingStart = false;
             _status.SetStatus(NetStatusOverlay.ConnectedKey);
         }
 
-        // The host pressed Rematch: the server reset the room to "waiting". Every client returns to
-        // the lobby room on the SAME socket, carrying the fresh waiting view for the room's controller
-        // (the welcome was a one-shot, so the room re-adopts the carried slot instead).
-        if (view.Phase == LobbyPhase.Waiting)
+        // Someone pressed Play again: the server sent the room into a fresh countdown. Every client
+        // returns to the lobby room on the SAME socket, carrying the view for the room's controller
+        // (the welcome was a one-shot, so the room re-adopts the carried slot instead); the room shows
+        // the countdown and relaunches the arena at loading, as for the first match.
+        if (view.Phase is LobbyPhase.Waiting or LobbyPhase.Countdown)
         {
             ReturnToRoom(view);
             return;
@@ -270,6 +282,7 @@ public partial class NetArena3DScene : Node3D
         _leaveLayer.Visible = false;
         _status.Visible = false;
         _matchHud.Visible = false;
+        _respawnHud.Visible = false;
 
         var message = new Label { Text = "net.host_left", HorizontalAlignment = HorizontalAlignment.Center };
         message.AddThemeFontSizeOverride("font_size", 28);
@@ -308,7 +321,6 @@ public partial class NetArena3DScene : Node3D
         // would explode. LeaveMatch doesn't need this: Reset drops the transport entirely.
         _transport.WelcomeReceived -= OnWelcome;
         _transport.SnapshotReceived -= OnSnapshot;
-        _transport.LobbyStateReceived -= OnLobbyState;
         NetworkSession.StartedLobby = view;
         _returningToRoom = true;
         if (GetTree().CurrentScene == this)
@@ -334,8 +346,8 @@ public partial class NetArena3DScene : Node3D
         leave.Pressed += LeaveMatch;
         layer.AddChild(leave);
 
-        // Online rematch: hidden until the round is decided, and only ever shown to the lobby host —
-        // pressing it asks the server to reset the room to "waiting" (the server enforces host-only).
+        // Online rematch ("Play again"): hidden until the round is decided, then shown to every player —
+        // pressing it asks the server to send the same room straight into a new countdown.
         _rematch = new Button { Name = "RematchButton", Text = "net.rematch", Visible = false };
         _rematch.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopRight);
         _rematch.GrowHorizontal = Control.GrowDirection.Begin;
@@ -347,10 +359,6 @@ public partial class NetArena3DScene : Node3D
     }
 
     private Button _rematch = null!;
-
-    // Only the lobby host may trigger a rematch (mirrors the server's hostSlot check).
-    private bool IsLobbyHost =>
-        NetworkSession.StartedLobby is { } lobby && _localSlot is byte slot && lobby.HostSlot == slot;
 
     // Escape leaves the match on desktop — the same exit the corner Leave button gives touch players.
     public override void _UnhandledInput(InputEvent @event)
@@ -376,6 +384,14 @@ public partial class NetArena3DScene : Node3D
     }
 
     public override void _Process(double delta) => Tick((float)delta);
+
+    // The transport outlives this scene; a push into a freed node would throw.
+    public override void _ExitTree()
+    {
+        _transport.WelcomeReceived -= OnWelcome;
+        _transport.SnapshotReceived -= OnSnapshot;
+        _transport.LobbyStateReceived -= OnLobbyState;
+    }
 
     /// <summary>One networked frame: pump the transport and run any due fixed ticks (20 Hz, the
     /// snapshot/input cadence both roles share). Public so tests can step it deterministically.</summary>
@@ -421,6 +437,7 @@ public partial class NetArena3DScene : Node3D
         _hudTanks.Clear();
         _hudTanks.AddRange(_tanks.Values);
         _matchHud.Refresh(delta, _camera, self, _hudTanks);
+        _respawnHud.Show(self.LivesRemaining - 1); // respawns in hand, as in solo
     }
 
     private void StepFixedTick()
@@ -535,6 +552,11 @@ public partial class NetArena3DScene : Node3D
         _hostInput = BuildLocalInput();
         var guestInputs = new Dictionary<byte, RelayedInputSource>();
         var humans = new List<ITank>(); // fills up below; bots read it live, so seat order doesn't matter
+        // Respawns land on any allowed cell away from every live tank, as in solo. Host-only: guests
+        // see the new position in the next snapshot.
+        var placer = new RespawnPlacer(_grid, TileSize, GridOrigin, _spawnAnchors,
+            new System.Random(_matchSeed), reserved: OnTeleportPad);
+        var world = _world;
 
         // One tank per roster seat: the host on local input, each remote human on a relayed input
         // keyed by its slot, and every un-joined seat an AI tank carrying the placeholder name the
@@ -561,7 +583,8 @@ public partial class NetArena3DScene : Node3D
                 : FireInterval * DifficultyPreset.For(GameSetup.BotDifficulty).FireIntervalScale;
             var tank = new Tank(input, _world, _arena, CellCentre(spawn.X, spawn.Y),
                 TankSpeed, fireInterval, ProjectileSpeed, maxHp: TankMaxHp, team: seat.Team,
-                teleporter: _teleporter, displayName: seat.Name);
+                teleporter: _teleporter, displayName: seat.Name, lives: Arena3DScene.StartingLives,
+                respawnPoint: () => placer.Pick(world.Entities));
             ai?.Bind(tank);
             if (ai is null)
             {
@@ -721,6 +744,7 @@ public partial class NetArena3DScene : Node3D
             tank.Rotation = state.Rotation;
             tank.TurretRotation = state.TurretRotation;
             tank.Hp = state.Hp;
+            tank.Lives = state.Lives;
             tank.Team = state.Team;
             tank.Shield = state.Shield; // a shielded remote tank shows its shield bar (ADR-0019 step 4)
             tank.Layer = state.Layer;   // and renders at the right elevation
@@ -869,6 +893,7 @@ public partial class NetArena3DScene : Node3D
         tank.Rotation = _predicted.Rotation;
         tank.TurretRotation = _predicted.TurretRotation;
         tank.Hp = _predicted.Hp;
+        tank.Lives = _predicted.Lives;
         tank.Team = _predicted.Team;
         tank.Layer = _predicted.Layer; // a cross-layer teleport must lift the guest's own tank too
         tank.Shield = _predicted.Shield;
@@ -882,7 +907,7 @@ public partial class NetArena3DScene : Node3D
         _roundStatus.Clear();
         foreach (var (slot, tank) in _rosterTanks)
         {
-            _netStats.Observe(slot, tank.Hp); // the host's side of the shared stat book
+            _netStats.Observe(slot, tank.Hp, tank.LivesRemaining); // the host's side of the shared stat book
             _roundStatus.Add((tank.Team, tank.IsAlive));
         }
 
@@ -890,15 +915,16 @@ public partial class NetArena3DScene : Node3D
         if (result.Decided)
         {
             RoundResult = result;
+            _transport.SendLobby(LobbyProtocol.EncodeRoundOver()); // unlocks Play again on the server
             _status.SetStatus(RoundOverText(result.WinningTeam));
-            _rematch.Visible = IsLobbyHost;
+            _rematch.Visible = true;
             ShowVictoryScreen(result.WinningTeam);
         }
     }
 
     // A guest has no world, but the snapshot carries every tank's hp and team — the same
-    // last-standing rule the host runs gives it the same verdict at the same moment. Hp 0 means
-    // out for good: net tanks have a single life (no respawns in a networked round).
+    // last-standing rule the host runs gives it the same verdict at the same moment. A tank is out
+    // once it has no hp and no lives left; at 0 hp with lives left it is waiting to respawn.
     private void DetectRoundOverFromSnapshot(SnapshotFrame snapshot)
     {
         if (RoundResult is not null || snapshot.Tanks.Count < 2)
@@ -909,8 +935,8 @@ public partial class NetArena3DScene : Node3D
         _roundStatus.Clear();
         foreach (var state in snapshot.Tanks)
         {
-            _netStats.Observe(state.Slot, state.Hp); // the guest's side of the shared stat book
-            _roundStatus.Add((state.Team, state.Hp > 0));
+            _netStats.Observe(state.Slot, state.Hp, state.Lives); // the guest's side of the shared stat book
+            _roundStatus.Add((state.Team, state.Hp > 0 || state.Lives > 0));
         }
 
         var result = LastStanding.Evaluate(_roundStatus);
@@ -918,7 +944,7 @@ public partial class NetArena3DScene : Node3D
         {
             RoundResult = result;
             _status.SetStatus(RoundOverText(result.WinningTeam));
-            _rematch.Visible = IsLobbyHost;
+            _rematch.Visible = true;
             ShowVictoryScreen(result.WinningTeam);
         }
     }
@@ -950,13 +976,10 @@ public partial class NetArena3DScene : Node3D
             RankedSheet("stats.repairs", t => t.Repairs, lowerIsBetter: false),
         };
 
-        var buttons = new List<VictoryScreen.ButtonSpec>();
-        if (IsLobbyHost)
+        var buttons = new List<VictoryScreen.ButtonSpec>
         {
-            buttons.Add(new VictoryScreen.ButtonSpec("VictoryRematch", "net.rematch",
-                () => _transport.SendLobby(LobbyProtocol.EncodeRematch())));
-        }
-
+            new("VictoryRematch", "net.rematch", () => _transport.SendLobby(LobbyProtocol.EncodeRematch())),
+        };
         buttons.Add(new VictoryScreen.ButtonSpec("VictoryLeave", "net.leave", LeaveMatch));
 
         _victory = VictoryScreen.Build(
@@ -964,6 +987,7 @@ public partial class NetArena3DScene : Node3D
         AddChild(_victory);
         _leaveLayer.Visible = false; // the screen's buttons take over — no doubled corner controls
         _matchHud.Visible = false;
+        _respawnHud.Visible = false;
     }
 
     private VictoryScreen.Sheet RankedSheet(
@@ -1035,7 +1059,7 @@ public partial class NetArena3DScene : Node3D
             return (NetTank)existing;
         }
 
-        var tank = new NetTank(TankMaxHp);
+        var tank = new NetTank(TankMaxHp) { Lives = Arena3DScene.StartingLives }; // until a snapshot says
         if (slot < _roster.Count)
         {
             tank.DisplayName = _roster[slot].Name; // a guest names its mirrors from the shared roster

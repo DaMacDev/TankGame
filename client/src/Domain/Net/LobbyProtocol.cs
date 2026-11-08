@@ -125,9 +125,12 @@ public static class LobbyProtocol
     /// <summary>The loading-phase handshake: this client reports its arena is built and ready.</summary>
     public static byte[] EncodeLoaded() => Tag(w => w.WriteString("type", "loaded"));
 
-    /// <summary>Host-only: reset a finished ("started") match back to a waiting room for a rematch —
-    /// same seats, mode and map; ready/loaded flags and seed cleared server-side.</summary>
+    /// <summary>Play again: any player sends a finished match straight into a new countdown with the
+    /// same seats, mode and map and a fresh seed. Refused until the host reports the round over.</summary>
     public static byte[] EncodeRematch() => Tag(w => w.WriteString("type", "rematch"));
+
+    /// <summary>Host-only: the host's world decided the round, which unlocks Play again server-side.</summary>
+    public static byte[] EncodeRoundOver() => Tag(w => w.WriteString("type", "roundOver"));
 
     // Hand-write the command JSON with a Utf8JsonWriter (a forward-only writer, no reflection) rather
     // than JsonSerializer over an anonymous type: the trimmed WebAssembly runtime disables

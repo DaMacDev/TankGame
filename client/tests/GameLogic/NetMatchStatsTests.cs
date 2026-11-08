@@ -9,6 +9,28 @@ namespace TankGame.Tests.GameLogic;
 // fall out of observed hp deltas.
 public class NetMatchStatsTests
 {
+    // Respawns: a rise from zero is a respawn (not a repair), and a tank is out only when its lives
+    // run out, so a winner who died and came back still ranks above the tank it finished off.
+    [Fact]
+    public void Respawn_IsNotARepair_AndOnlyTheLastLifeEliminates()
+    {
+        var stats = new NetMatchStats();
+        stats.Register(0, "Ada", 0);
+        stats.Register(1, "Bea", 1);
+        stats.Observe(0, 8, 6);
+        stats.Observe(1, 8, 6);
+
+        stats.Observe(0, 0, 5); // Ada down, waiting to respawn
+        stats.Observe(0, 8, 5); // Ada back
+        stats.Observe(1, 0, 0); // Bea out
+
+        var ada = stats.Tallies[0];
+        Assert.Equal(0, ada.Repairs);
+        Assert.Equal(8, ada.DamageTaken);
+        Assert.True(ada.Alive);
+        Assert.Equal("Ada", stats.Standings()[0].Name);
+    }
+
     [Fact]
     public void FirstObservation_IsTheBaseline_NotDamage()
     {

@@ -27,7 +27,8 @@ public partial class Arena3DScene : Node3D
     private const int PlayerTeam = 0;
     private const int EnemyTeam = 1;
     private const int EnemyCount = 3;
-    private const int StartingLives = 6; // 1 current life + 5 respawns (owner ask); HUD shows respawns left
+    /// <summary>Lives each tank starts with, solo and online: 1 current life + 5 respawns (owner ask).</summary>
+    public const int StartingLives = 6;
     private const int TankMaxHp = 8; // beefier tanks so fights last longer (below 40% HP a tank limps + smokes)
 
     // Fog of war (the 3D port of the iso fog): the player sees only a lit circle around their tank. An

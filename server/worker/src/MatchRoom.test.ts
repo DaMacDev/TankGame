@@ -35,6 +35,7 @@ async function joinRoom(code: string, name?: string): Promise<Conn> {
 
   const buffered: Uint8Array[] = [];
   const waiters: ((message: Uint8Array) => void)[] = [];
+  ws!.binaryType = "arraybuffer"; // the 2026 compat date defaults a client socket to Blob
   ws!.accept();
   ws!.addEventListener("message", (event: MessageEvent) => {
     const message = new Uint8Array(event.data as ArrayBuffer);
@@ -123,7 +124,7 @@ describe("MatchRoom (relay)", () => {
     const snapshot: SnapshotFrame = {
       tick: 3,
       acks: [{ slot: 1, seq: 2 }],
-      tanks: [{ slot: 0, x: 64, y: 128, rotation: 0, turretRotation: 0.5, hp: 8, team: 0, shield: 0, layer: 0 }],
+      tanks: [{ slot: 0, x: 64, y: 128, rotation: 0, turretRotation: 0.5, hp: 8, team: 0, shield: 0, layer: 0, lives: 6 }],
       wallDeltas: [],
       projectiles: [],
 

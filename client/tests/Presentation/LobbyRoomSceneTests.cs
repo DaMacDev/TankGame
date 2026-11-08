@@ -386,6 +386,31 @@ public class LobbyRoomSceneTests : TestClass
         }
     }
 
+    // Play again re-entry: the arena hands over a countdown view, and the room must show it ticking.
+    [Test]
+    public void PlayAgainReEntry_ShowsTheCountdown()
+    {
+        NetworkSession.LocalSlot = 1;
+        NetworkSession.StartedLobby = View(LobbyPhase.Countdown, hostSlot: 0,
+            new LobbyPlayer(0, "Ada", 0, true),
+            new LobbyPlayer(1, "Bea", 1, true));
+        var scene = GD.Load<PackedScene>("res://src/Presentation/LobbyRoom.tscn").Instantiate<Control>();
+        TestScene.AddChild(scene);
+
+        try
+        {
+            if (scene.FindChild("Countdown", recursive: true, owned: false) is not Label { Visible: true } label
+                || label.Text.Length == 0)
+            {
+                throw new Exception("A Play again re-entry must show the countdown.");
+            }
+        }
+        finally
+        {
+            scene.QueueFree();
+        }
+    }
+
     private static LobbyView View(LobbyPhase phase, int hostSlot, params LobbyPlayer[] players) =>
         new(NetMode.Ffa, phase, hostSlot, phase == LobbyPhase.Countdown ? 3 : 0, players);
 

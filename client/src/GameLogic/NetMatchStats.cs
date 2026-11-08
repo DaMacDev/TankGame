@@ -45,15 +45,20 @@ public sealed class NetMatchStats
     }
 
     /// <summary>One hp sighting for a slot. The first sighting is the baseline; every later drop is
-    /// damage taken, every rise a repair, and the drop to zero stamps the elimination order.</summary>
-    public void Observe(byte slot, int hp)
+    /// damage taken, every rise a repair (a rise from zero is a respawn, not a repair), and the tank
+    /// is out once it has no hp and no lives left, which stamps the elimination order.</summary>
+    /// <param name="slot">The tank's player slot.</param>
+    /// <param name="hp">Its hit points now.</param>
+    /// <param name="lives">Lives left including the current one; 0 = no respawns left.</param>
+    public void Observe(byte slot, int hp, int lives = 0)
     {
         var tally = GetOrCreate(slot);
+        var alive = hp > 0 || lives > 0;
         if (!tally.Baselined)
         {
             tally.Baselined = true;
             tally.Hp = hp;
-            tally.Alive = hp > 0;
+            tally.Alive = alive;
             return;
         }
 
@@ -61,13 +66,13 @@ public sealed class NetMatchStats
         {
             tally.DamageTaken += tally.Hp - hp;
         }
-        else if (hp > tally.Hp)
+        else if (hp > tally.Hp && tally.Hp > 0)
         {
             tally.Repairs += hp - tally.Hp;
         }
 
         tally.Hp = hp;
-        if (tally.Alive && hp <= 0)
+        if (tally.Alive && !alive)
         {
             tally.Alive = false;
             tally.EliminatedAt = ++_eliminationSeq;
