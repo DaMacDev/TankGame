@@ -282,6 +282,8 @@ public static class ProtocolCodec
             {
                 tanks[i] = tanks[i] with { Lives = data[offset + i] };
             }
+
+            offset += livesCount;
         }
 
         return new SnapshotFrame(tick, acks, tanks, walls, projectiles) { Powerups = powerups };

@@ -35,7 +35,7 @@ const TICK_MS = 1000;
 // What a client may ask for. "join" and "leave" follow the socket; "tick" and "loadingTimeout" belong
 // to the alarm. Anything else from a socket is dropped, so a client can't skip the countdown or the
 // loading handshake, or leave a ghost seat behind.
-const CLIENT_COMMANDS = new Set(["setName", "setReady", "setTeam", "setMode", "setMap", "start", "rematch", "loaded"]);
+const CLIENT_COMMANDS = new Set(["setName", "setReady", "setTeam", "setMode", "setMap", "start", "rematch", "roundOver", "loaded"]);
 
 interface Attachment {
   slot: number;

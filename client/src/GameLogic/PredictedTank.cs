@@ -75,8 +75,16 @@ public sealed class PredictedTank
     public void Predict(InputFrame input)
     {
         _pending.Add(input);
-        ApplyMovement(input);
+        if (!IsDown)
+        {
+            ApplyMovement(input);
+        }
     }
+
+    // A downed tank waits for its respawn and the host ignores its input, so prediction holds still.
+    private bool IsDown => _reconciled && Hp <= 0;
+
+    private bool _reconciled;
 
     /// <summary>Reconciles against an authoritative snapshot: snap this slot's transform, health,
     /// shield and elevation to the server, drop every input the server has acknowledged, and replay the rest so the
@@ -94,12 +102,18 @@ public sealed class PredictedTank
         TurretRotation = authoritative.TurretRotation;
         Hp = authoritative.Hp;
         Lives = authoritative.Lives;
+        _reconciled = true;
         Team = authoritative.Team;
         Shield = authoritative.Shield;
         Layer = authoritative.Layer;
 
         var acked = snapshot.AckFor(Slot); // the broadcast carries one anchor per guest — read ours
         _pending.RemoveAll(frame => frame.Seq <= acked);
+        if (IsDown)
+        {
+            return;
+        }
+
         foreach (var frame in _pending)
         {
             ApplyMovement(frame);

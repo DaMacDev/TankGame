@@ -388,6 +388,7 @@ export function decodeSnapshot(data: Uint8Array): SnapshotFrame {
     for (let i = 0; i < livesCount && i < tanks.length; i++) {
       tanks[i].lives = view.getUint8(offset + i);
     }
+    offset += livesCount;
   }
 
   return { tick, acks, tanks, wallDeltas, projectiles, powerups };

@@ -32,6 +32,7 @@ public partial class NetE2EDriver : Node
     private readonly bool _rematch;
     private NetArena3DScene? _firstArena;
     private double _secondPlaying;
+    private bool _reportedOver;
     private readonly Dictionary<string, object> _report = new();
     private readonly Dictionary<byte, System.Numerics.Vector2> _firstSeen = new();
     private readonly Dictionary<byte, float> _farthest = new();
@@ -259,7 +260,15 @@ public partial class NetE2EDriver : Node
     {
         if (_firstArena is null)
         {
-            if (_playing >= 4d)
+            // Stand-in for a decided round: the host reports it over (as its world would), then a
+            // guest presses Play again a moment later.
+            if (_role == "host" && _playing >= 4d && !_reportedOver)
+            {
+                _reportedOver = true;
+                NetworkSession.Active?.SendLobby(LobbyProtocol.EncodeRoundOver());
+            }
+
+            if (_playing >= 6d)
             {
                 _firstArena = arena;
                 if (_role == "guest")

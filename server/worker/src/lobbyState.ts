@@ -39,6 +39,9 @@ export interface LobbyState {
   countdown: number; // seconds left while phase === "countdown"; 0 otherwise
   map: string; // map id the host picked; "" = random, resolved by the host client at launch
   seed: number; // match seed stamped at the waiting→countdown transition; feeds spawn shuffle + AI
+  // The host reported the round decided. Only the host's machine simulates, so the server learns the
+  // end from it; Play again is refused until then, so a guest can't restart a round in progress.
+  roundOver?: boolean;
   players: Player[]; // always sorted by slot
 }
 
@@ -52,6 +55,7 @@ export type LobbyCommand =
   | { type: "setMap"; slot: number; map: string }
   | { type: "start"; slot: number }
   | { type: "rematch"; slot: number }
+  | { type: "roundOver"; slot: number }
   | { type: "loaded"; slot: number }
   | { type: "loadingTimeout" }
   | { type: "tick" };
@@ -82,6 +86,8 @@ export function reduce(state: LobbyState, command: LobbyCommand): LobbyState {
       return start(state, command.slot);
     case "rematch":
       return rematch(state, command.slot);
+    case "roundOver":
+      return state.phase === "started" && command.slot === state.hostSlot ? { ...state, roundOver: true } : state;
     case "loaded":
       return markLoaded(state, command.slot);
     case "loadingTimeout":
@@ -168,7 +174,7 @@ function start(state: LobbyState, slot: number): LobbyState {
 // a fresh countdown with a new seed — no trip back to the room to ready up (owner ask). Guests that
 // disconnected mid-match already left the roster via their close-handler's "leave".
 function rematch(state: LobbyState, slot: number): LobbyState {
-  if (state.phase !== "started" || !hasSlot(state, slot)) {
+  if (state.phase !== "started" || !state.roundOver || !hasSlot(state, slot)) {
     return state;
   }
   const seed = (Math.random() * 0x80000000) | 0;
@@ -177,6 +183,7 @@ function rematch(state: LobbyState, slot: number): LobbyState {
     phase: "countdown",
     countdown: COUNTDOWN_SECONDS,
     seed,
+    roundOver: false,
     players: state.players.map((p) => ({ ...p, loaded: false })),
   };
 }

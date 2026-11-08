@@ -255,8 +255,22 @@ describe("lobby rematch", () => {
     for (let i = 0; i < COUNTDOWN_SECONDS; i++) state = reduce(state, { type: "tick" });
     state = run(state, { type: "loaded", slot: 0 }, { type: "loaded", slot: 1 });
     expect(state.phase).toBe("started");
-    return state;
+    return reduce(state, { type: "roundOver", slot: 0 }); // the host's world decided the round
   }
+
+  it("refuses Play again while the round is still being fought", () => {
+    const playing = { ...startedLobby(), roundOver: false };
+    expect(reduce(playing, { type: "rematch", slot: 1 }).phase).toBe("started");
+  });
+
+  it("only the host can report the round over", () => {
+    const playing = { ...startedLobby(), roundOver: false };
+    expect(reduce(playing, { type: "roundOver", slot: 1 }).roundOver).toBe(false);
+  });
+
+  it("a new round starts not over", () => {
+    expect(reduce(startedLobby(), { type: "rematch", slot: 1 }).roundOver).toBe(false);
+  });
 
   it("a rematch goes straight into a countdown with a fresh seed and loaded flags cleared", () => {
     const before = startedLobby();

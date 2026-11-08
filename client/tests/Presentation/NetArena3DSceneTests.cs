@@ -607,6 +607,14 @@ public class NetArena3DSceneTests : TestClass
                 throw new Exception("Returning to the room must carry the countdown view for its controller.");
             }
 
+            // A backgrounded tab gets the rest of the push in the same Poll: the room needs the newest.
+            var loading = countdown with { Phase = LobbyPhase.Loading, Countdown = 0 };
+            _transport.DeliverLobby(loading);
+            if (!ReferenceEquals(NetworkSession.StartedLobby, loading))
+            {
+                throw new Exception("A later push in the same batch must reach the room, or it never relaunches.");
+            }
+
             if (NetworkSession.Active is null)
             {
                 throw new Exception("A rematch reuses the socket — the transport must NOT be dropped.");
@@ -763,6 +771,11 @@ public class NetArena3DSceneTests : TestClass
         if (_scene.RoundResult is not { Decided: true })
         {
             throw new Exception("Downing the only opponent must decide the round on the host.");
+        }
+
+        if (!_transport.SentLobby.Any(m => m.AsSpan().SequenceEqual(LobbyProtocol.EncodeRoundOver())))
+        {
+            throw new Exception("The host must report the round over, or the server refuses Play again.");
         }
 
         if (_scene.FindChild("VictoryCard", recursive: true, owned: false) is null)

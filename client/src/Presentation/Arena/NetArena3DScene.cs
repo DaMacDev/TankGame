@@ -244,6 +244,14 @@ public partial class NetArena3DScene : Node3D
     // players loaded, or the last laggard left — server-side) releases the match to run.
     private void OnLobbyState(LobbyView view)
     {
+        // On the way back to the room: one Poll can deliver countdown, loading and started together,
+        // so keep handing the newest view on — the room picks up from wherever the server is.
+        if (_returningToRoom)
+        {
+            NetworkSession.StartedLobby = view;
+            return;
+        }
+
         if (_awaitingStart && view.Phase == LobbyPhase.Started)
         {
             _awaitingStart = false;
@@ -313,7 +321,6 @@ public partial class NetArena3DScene : Node3D
         // would explode. LeaveMatch doesn't need this: Reset drops the transport entirely.
         _transport.WelcomeReceived -= OnWelcome;
         _transport.SnapshotReceived -= OnSnapshot;
-        _transport.LobbyStateReceived -= OnLobbyState;
         NetworkSession.StartedLobby = view;
         _returningToRoom = true;
         if (GetTree().CurrentScene == this)
@@ -377,6 +384,14 @@ public partial class NetArena3DScene : Node3D
     }
 
     public override void _Process(double delta) => Tick((float)delta);
+
+    // The transport outlives this scene; a push into a freed node would throw.
+    public override void _ExitTree()
+    {
+        _transport.WelcomeReceived -= OnWelcome;
+        _transport.SnapshotReceived -= OnSnapshot;
+        _transport.LobbyStateReceived -= OnLobbyState;
+    }
 
     /// <summary>One networked frame: pump the transport and run any due fixed ticks (20 Hz, the
     /// snapshot/input cadence both roles share). Public so tests can step it deterministically.</summary>
@@ -892,7 +907,7 @@ public partial class NetArena3DScene : Node3D
         _roundStatus.Clear();
         foreach (var (slot, tank) in _rosterTanks)
         {
-            _netStats.Observe(slot, tank.Hp); // the host's side of the shared stat book
+            _netStats.Observe(slot, tank.Hp, tank.LivesRemaining); // the host's side of the shared stat book
             _roundStatus.Add((tank.Team, tank.IsAlive));
         }
 
@@ -900,6 +915,7 @@ public partial class NetArena3DScene : Node3D
         if (result.Decided)
         {
             RoundResult = result;
+            _transport.SendLobby(LobbyProtocol.EncodeRoundOver()); // unlocks Play again on the server
             _status.SetStatus(RoundOverText(result.WinningTeam));
             _rematch.Visible = true;
             ShowVictoryScreen(result.WinningTeam);
@@ -919,7 +935,7 @@ public partial class NetArena3DScene : Node3D
         _roundStatus.Clear();
         foreach (var state in snapshot.Tanks)
         {
-            _netStats.Observe(state.Slot, state.Hp); // the guest's side of the shared stat book
+            _netStats.Observe(state.Slot, state.Hp, state.Lives); // the guest's side of the shared stat book
             _roundStatus.Add((state.Team, state.Hp > 0 || state.Lives > 0));
         }
 
@@ -1043,7 +1059,7 @@ public partial class NetArena3DScene : Node3D
             return (NetTank)existing;
         }
 
-        var tank = new NetTank(TankMaxHp);
+        var tank = new NetTank(TankMaxHp) { Lives = Arena3DScene.StartingLives }; // until a snapshot says
         if (slot < _roster.Count)
         {
             tank.DisplayName = _roster[slot].Name; // a guest names its mirrors from the shared roster
