@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Godot;
 using Chickensoft.GoDotTest;
 using TankGame.Domain;
@@ -463,21 +464,88 @@ public class NetArena3DSceneTests : TestClass
     // The authority decides a round from its own world: every tank but the survivor falls.
     private static void DecideRoundFor(NetArena3DScene scene, byte survivor)
     {
+        var others = new List<ITank>();
         foreach (var (slot, tank) in scene.Tanks)
         {
             if (slot != survivor)
             {
-                tank.TakeDamage(tank.Hp + tank.Shield);
+                others.Add(tank);
             }
+        }
+
+        KnockOut(scene, others);
+    }
+
+    // Net tanks respawn, so a tank is out only once every life is spent: down each one again as soon
+    // as it is back, ticking through the respawn delays, until none is left.
+    private static void KnockOut(NetArena3DScene scene, IReadOnlyList<ITank> tanks)
+    {
+        for (var i = 0; i < 2000 && tanks.Any(t => t.IsAlive); i++)
+        {
+            foreach (var tank in tanks)
+            {
+                if (tank.Hp > 0)
+                {
+                    tank.TakeDamage(tank.Hp + tank.Shield);
+                }
+            }
+
+            scene.Tick(0.05f);
         }
 
         scene.Tick(0.06f);
     }
 
-    // Online rematch: once the round is decided, the LOBBY host (and only the host) gets a Rematch
-    // button beside Leave; pressing it sends the rematch lobby command over the same socket.
+    // The bug report: a networked tank that dies must come back while it has lives, with one spent.
     [Test]
-    public void RoundOver_RevealsRematch_ForTheLobbyHost_AndPressingSendsTheCommand()
+    public void HostTank_RespawnsAfterDying_WithALifeSpent()
+    {
+        _transport.DeliverWelcome(0);
+        var guest = _scene.Tanks[1];
+        guest.TakeDamage(guest.Hp + guest.Shield);
+        for (var i = 0; i < 60; i++)
+        {
+            _scene.Tick(0.05f); // past the respawn delay
+        }
+
+        if (guest.Hp <= 0)
+        {
+            throw new Exception("A networked tank with lives left must respawn after dying.");
+        }
+
+        if (guest.LivesRemaining != Arena3DScene.StartingLives - 1)
+        {
+            throw new Exception($"A death must spend one life; {guest.LivesRemaining} left.");
+        }
+
+        if (_scene.RoundResult is not null)
+        {
+            throw new Exception("A tank that can still respawn must not end the round.");
+        }
+    }
+
+    // A guest judges the round from snapshots: a tank at 0 hp with lives left is only waiting to respawn.
+    [Test]
+    public void GuestSeeingADownedTankWithLivesLeft_KeepsTheRoundGoing()
+    {
+        _transport.DeliverWelcome(1);
+        _transport.DeliverSnapshot(new SnapshotFrame(1, 0, new List<TankState>
+        {
+            new(0, 64f, 64f, 0f, 0f, 0, 0, 0, 0, Lives: 3),
+            new(1, 128f, 64f, 0f, 0f, 8, 1, 0, 0, Lives: 6),
+        }, new List<WallDelta>(), new List<ProjectileState>()));
+        _scene.Tick(0.05f);
+
+        if (_scene.RoundResult is not null)
+        {
+            throw new Exception("A downed tank with lives left must not decide the round on a guest.");
+        }
+    }
+
+    // Online rematch: once the round is decided, the corner gets a Play again button beside Leave;
+    // pressing it sends the rematch lobby command over the same socket.
+    [Test]
+    public void RoundOver_RevealsRematch_AndPressingSendsTheCommand()
     {
         NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 1, 0,
             new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true) });
@@ -499,7 +567,7 @@ public class NetArena3DSceneTests : TestClass
 
             if (!rematch.Visible)
             {
-                throw new Exception("The lobby host must see the Rematch button once the round is decided.");
+                throw new Exception("Play again must show once the round is decided.");
             }
 
             rematch.EmitSignal(BaseButton.SignalName.Pressed);
@@ -516,10 +584,10 @@ public class NetArena3DSceneTests : TestClass
         }
     }
 
-    // The server answered the rematch by resetting the room to "waiting": every client returns to the
-    // lobby room on the SAME socket, carrying the fresh waiting view for the room's controller.
+    // The server answered Play again with a fresh countdown: every client returns to the lobby room on
+    // the SAME socket, carrying the countdown view for the room's controller.
     [Test]
-    public void WaitingPush_ReturnsToTheRoom_KeepingTheTransport()
+    public void CountdownPush_ReturnsToTheRoom_KeepingTheTransport()
     {
         NetworkSession.StartedLobby = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Started, 0, 0,
             new List<LobbyPlayer> { new(0, "Ada", 0, true, true), new(1, "Bea", 1, true, true) });
@@ -530,13 +598,13 @@ public class NetArena3DSceneTests : TestClass
 
         try
         {
-            var waiting = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Waiting, 0, 0,
-                new List<LobbyPlayer> { new(0, "Ada", 0, false), new(1, "Bea", 1, false) });
-            _transport.DeliverLobby(waiting);
+            var countdown = new LobbyView(TankGame.Domain.Net.GameMode.Ffa, LobbyPhase.Countdown, 0, 3,
+                new List<LobbyPlayer> { new(0, "Ada", 0, true), new(1, "Bea", 1, true) });
+            _transport.DeliverLobby(countdown);
 
-            if (!ReferenceEquals(NetworkSession.StartedLobby, waiting))
+            if (!ReferenceEquals(NetworkSession.StartedLobby, countdown))
             {
-                throw new Exception("Returning to the room must carry the fresh waiting view for its controller.");
+                throw new Exception("Returning to the room must carry the countdown view for its controller.");
             }
 
             if (NetworkSession.Active is null)
@@ -670,9 +738,9 @@ public class NetArena3DSceneTests : TestClass
             throw new Exception("A guest must keep a Leave affordance on the victory screen.");
         }
 
-        if (_scene.FindChild("VictoryRematch", recursive: true, owned: false) is not null)
+        if (_scene.FindChild("VictoryRematch", recursive: true, owned: false) is not Button)
         {
-            throw new Exception("A non-host must not be offered Rematch.");
+            throw new Exception("A guest must be offered Play again too.");
         }
 
         var corner = _scene.FindChild("LeaveLayer", recursive: true, owned: false) as CanvasLayer
@@ -690,8 +758,7 @@ public class NetArena3DSceneTests : TestClass
     {
         _transport.DeliverWelcome(0);
 
-        _scene.Tanks[1].TakeDamage(8); // the guest tank falls (net tanks have a single life)
-        _scene.Tick(0.05f);            // the deciding authoritative tick
+        KnockOut(_scene, new[] { _scene.Tanks[1] }); // the guest tank falls through every life
 
         if (_scene.RoundResult is not { Decided: true })
         {

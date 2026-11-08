@@ -164,19 +164,20 @@ function start(state: LobbyState, slot: number): LobbyState {
   return { ...state, phase: "countdown", countdown: COUNTDOWN_SECONDS, seed };
 }
 
-// Online rematch: the host resets a finished match back to a waiting lobby — same seats, mode and
-// map, ready/loaded flags and seed cleared — so the room runs the normal start flow again. Guests
-// that disconnected mid-match already left the roster via their close-handler's "leave".
+// Online rematch ("Play again"): any seated player sends the same seats, mode and map straight into
+// a fresh countdown with a new seed — no trip back to the room to ready up (owner ask). Guests that
+// disconnected mid-match already left the roster via their close-handler's "leave".
 function rematch(state: LobbyState, slot: number): LobbyState {
-  if (state.phase !== "started" || slot !== state.hostSlot) {
+  if (state.phase !== "started" || !hasSlot(state, slot)) {
     return state;
   }
+  const seed = (Math.random() * 0x80000000) | 0;
   return {
     ...state,
-    phase: "waiting",
-    countdown: 0,
-    seed: 0,
-    players: state.players.map((p) => ({ ...p, ready: false, loaded: false })),
+    phase: "countdown",
+    countdown: COUNTDOWN_SECONDS,
+    seed,
+    players: state.players.map((p) => ({ ...p, loaded: false })),
   };
 }
 

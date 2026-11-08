@@ -103,7 +103,7 @@ public static class ProtocolCodec
     {
         var size = 4 + 1 + (frame.Acks.Count * InputAckSize) + 1 + (frame.Tanks.Count * TankStateSize)
             + 2 + (frame.WallDeltas.Count * WallDeltaSize) + 2 + (frame.Projectiles.Count * ProjectileStateSize)
-            + 1 + (frame.Powerups.Count * PowerupStateSize);
+            + 1 + (frame.Powerups.Count * PowerupStateSize) + 1 + frame.Tanks.Count;
         var buffer = new byte[size];
         var span = buffer.AsSpan();
         var offset = 0;
@@ -178,6 +178,13 @@ public static class ProtocolCodec
             BinaryPrimitives.WriteUInt16LittleEndian(span[offset..], pickup.CellY);
             offset += 2;
             span[offset++] = pickup.Available;
+        }
+
+        // Lives, one byte per tank in tank order, appended after the pickups for the same reason.
+        span[offset++] = (byte)frame.Tanks.Count;
+        foreach (var tank in frame.Tanks)
+        {
+            span[offset++] = tank.Lives;
         }
 
         return buffer;
@@ -264,6 +271,16 @@ public static class ProtocolCodec
                 offset += 2;
                 var available = data[offset++];
                 powerups.Add(new PowerupState(id, kind, cellX, cellY, available));
+            }
+        }
+
+        // Tolerated trailing extension: a snapshot from before respawns leaves Lives at 0 (hp decides).
+        if (offset < data.Length)
+        {
+            var livesCount = data[offset++];
+            for (var i = 0; i < livesCount && i < tanks.Count; i++)
+            {
+                tanks[i] = tanks[i] with { Lives = data[offset + i] };
             }
         }
 

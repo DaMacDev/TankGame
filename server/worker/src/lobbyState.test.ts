@@ -241,8 +241,8 @@ describe("lobby state reducer", () => {
   });
 });
 
-// Online rematch: the host resets a finished ("started") match back to a waiting lobby with the
-// same seats/mode/map, so the room can run the normal start flow again (fresh seed included).
+// Online rematch ("Play again"): any player sends a finished ("started") match straight into a new
+// countdown with the same seats/mode/map and a fresh seed.
 describe("lobby rematch", () => {
   // Drive a 2-player room all the way to "started".
   function startedLobby(): LobbyState {
@@ -258,12 +258,13 @@ describe("lobby rematch", () => {
     return state;
   }
 
-  it("the host's rematch resets a started match to waiting, clearing ready/loaded and the seed", () => {
-    const state = reduce(startedLobby(), { type: "rematch", slot: 0 });
-    expect(state.phase).toBe("waiting");
-    expect(state.countdown).toBe(0);
-    expect(state.seed).toBe(0);
-    expect(state.players.every((p) => !p.ready && !p.loaded)).toBe(true);
+  it("a rematch goes straight into a countdown with a fresh seed and loaded flags cleared", () => {
+    const before = startedLobby();
+    const state = reduce(before, { type: "rematch", slot: 0 });
+    expect(state.phase).toBe("countdown");
+    expect(state.countdown).toBe(COUNTDOWN_SECONDS);
+    expect(state.seed).not.toBe(0);
+    expect(state.players.every((p) => !p.loaded)).toBe(true);
   });
 
   it("keeps the seats, names, teams, mode and map across a rematch", () => {
@@ -277,9 +278,12 @@ describe("lobby rematch", () => {
     expect(state.hostSlot).toBe(before.hostSlot);
   });
 
-  it("ignores a rematch from a non-host", () => {
-    const state = reduce(startedLobby(), { type: "rematch", slot: 1 });
-    expect(state.phase).toBe("started");
+  it("accepts a rematch from a guest", () => {
+    expect(reduce(startedLobby(), { type: "rematch", slot: 1 }).phase).toBe("countdown");
+  });
+
+  it("ignores a rematch from a slot not in the room", () => {
+    expect(reduce(startedLobby(), { type: "rematch", slot: 5 }).phase).toBe("started");
   });
 
   it("ignores a rematch outside the started phase", () => {
@@ -289,16 +293,17 @@ describe("lobby rematch", () => {
     expect(reduce(counting, { type: "rematch", slot: 0 }).phase).toBe("countdown");
   });
 
-  it("runs the full start flow again after a rematch, stamping a fresh seed", () => {
-    let state = reduce(startedLobby(), { type: "rematch", slot: 0 });
-    state = run(state, { type: "setReady", slot: 1, ready: true }, { type: "start", slot: 0 });
-    expect(state.phase).toBe("countdown");
-    expect(state.seed).not.toBe(0);
+  it("runs countdown, loading and started again after a rematch", () => {
+    let state = reduce(startedLobby(), { type: "rematch", slot: 1 });
+    for (let i = 0; i < COUNTDOWN_SECONDS; i++) state = reduce(state, { type: "tick" });
+    expect(state.phase).toBe("loading");
+    state = run(state, { type: "loaded", slot: 0 }, { type: "loaded", slot: 1 });
+    expect(state.phase).toBe("started");
   });
 
   it("a guest who disconnected mid-match stays removed after the rematch", () => {
     const state = run(startedLobby(), { type: "leave", slot: 1 }, { type: "rematch", slot: 0 });
-    expect(state.phase).toBe("waiting");
+    expect(state.phase).toBe("countdown");
     expect(state.players.map((p) => p.slot)).toEqual([0]);
   });
 });

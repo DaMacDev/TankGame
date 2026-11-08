@@ -121,6 +121,10 @@ jobs:
         run: node scripts/net-e2e.mjs 3
         env:
           NET_E2E_HOST_QUITS: "1"
+      - name: Play again starts a new match
+        run: node scripts/net-e2e.mjs 3
+        env:
+          NET_E2E_REMATCH: "1"
 
   worker-test:
     needs: changes

@@ -124,7 +124,7 @@ describe("MatchRoom (relay)", () => {
     const snapshot: SnapshotFrame = {
       tick: 3,
       acks: [{ slot: 1, seq: 2 }],
-      tanks: [{ slot: 0, x: 64, y: 128, rotation: 0, turretRotation: 0.5, hp: 8, team: 0, shield: 0, layer: 0 }],
+      tanks: [{ slot: 0, x: 64, y: 128, rotation: 0, turretRotation: 0.5, hp: 8, team: 0, shield: 0, layer: 0, lives: 6 }],
       wallDeltas: [],
       projectiles: [],
 

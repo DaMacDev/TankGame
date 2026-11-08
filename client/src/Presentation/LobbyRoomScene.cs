@@ -134,11 +134,13 @@ public partial class LobbyRoomScene : Control
         MenuStyle.AttachHoverRecursive(this);
 
         // Rematch re-entry: the arena returned here on the same socket, so no second welcome will
-        // ever arrive — adopt the carried slot and the waiting view the arena captured at hand-off.
+        // ever arrive — adopt the carried slot and the waiting or countdown view the arena captured.
         if (NetworkSession.LocalSlot is byte carried)
         {
             _controller.Adopt(carried,
-                NetworkSession.StartedLobby is { Phase: LobbyPhase.Waiting } waiting ? waiting : null);
+                NetworkSession.StartedLobby is { Phase: LobbyPhase.Waiting or LobbyPhase.Countdown } carriedView
+                    ? carriedView
+                    : null);
         }
 
         Render();

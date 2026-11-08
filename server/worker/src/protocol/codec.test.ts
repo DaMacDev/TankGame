@@ -25,8 +25,8 @@ describe("protocol codec", () => {
       tick: 100,
       acks: [{ slot: 1, seq: 41 }],
       tanks: [
-        { slot: 0, x: 64, y: 128, rotation: 0, turretRotation: 0.5, hp: 3, team: 0, shield: 4, layer: 1 },
-        { slot: 1, x: 200, y: 96, rotation: 0.25, turretRotation: -1, hp: 2, team: 1, shield: 0, layer: 0 },
+        { slot: 0, x: 64, y: 128, rotation: 0, turretRotation: 0.5, hp: 3, team: 0, shield: 4, layer: 1, lives: 6 },
+        { slot: 1, x: 200, y: 96, rotation: 0.25, turretRotation: -1, hp: 2, team: 1, shield: 0, layer: 0, lives: 0 },
       ],
       wallDeltas: [
         { cellX: 5, cellY: 6, material: 1, hp: 2 },
@@ -135,7 +135,7 @@ describe("protocol codec", () => {
       ...encodeSnapshot({
         tick: 2,
         acks: [{ slot: 1, seq: 1 }],
-        tanks: [{ slot: 0, x: 64, y: 128, rotation: 0, turretRotation: 0.5, hp: 3, team: 1, shield: 0, layer: 0 }],
+        tanks: [{ slot: 0, x: 64, y: 128, rotation: 0, turretRotation: 0.5, hp: 3, team: 1, shield: 0, layer: 0, lives: 5 }],
         wallDeltas: [{ cellX: 5, cellY: 6, material: 1, hp: 2 }],
         projectiles: [],
 
@@ -164,6 +164,8 @@ describe("protocol codec", () => {
       0x02, // hp = 2
       0x00, 0x00, // projectileCount = 0
       0x00, // powerupCount = 0
+      0x01, // livesCount = 1
+      0x05, // lives = 5
     ]);
   });
 
@@ -191,6 +193,7 @@ describe("protocol codec", () => {
       0x05, 0x00, // cellX = 5
       0x09, 0x00, // cellY = 9
       0x01, // available = 1
+      0x00, // livesCount = 0
     ]);
   });
 });

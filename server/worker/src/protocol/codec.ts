@@ -25,6 +25,9 @@ export interface TankState {
   // layer the tank stands on (ADR-0018), so a mirrored tank renders at the right height.
   shield: number;
   layer: number;
+  // Lives left including the current one (respawns). Rides a trailing section after the pickups;
+  // 0 when decoding a snapshot from before it existed.
+  lives: number;
 }
 
 export interface WallDelta {
@@ -184,7 +187,9 @@ export function encodeSnapshot(frame: SnapshotFrame): Uint8Array {
     2 +
     frame.projectiles.length * PROJECTILE_STATE_SIZE +
     1 +
-    frame.powerups.length * POWERUP_STATE_SIZE;
+    frame.powerups.length * POWERUP_STATE_SIZE +
+    1 +
+    frame.tanks.length;
   const buffer = new Uint8Array(size);
   const view = new DataView(buffer.buffer);
   let offset = 0;
@@ -270,6 +275,14 @@ export function encodeSnapshot(frame: SnapshotFrame): Uint8Array {
     offset += 1;
   }
 
+  // Lives, one byte per tank in tank order, appended after the pickups for the same reason.
+  view.setUint8(offset, frame.tanks.length);
+  offset += 1;
+  for (const tank of frame.tanks) {
+    view.setUint8(offset, tank.lives);
+    offset += 1;
+  }
+
   return buffer;
 }
 
@@ -313,7 +326,7 @@ export function decodeSnapshot(data: Uint8Array): SnapshotFrame {
     offset += 1;
     const layer = view.getUint8(offset);
     offset += 1;
-    tanks.push({ slot, x, y, rotation, turretRotation, hp, team, shield, layer });
+    tanks.push({ slot, x, y, rotation, turretRotation, hp, team, shield, layer, lives: 0 });
   }
 
   const wallCount = view.getUint16(offset, true);
@@ -365,6 +378,15 @@ export function decodeSnapshot(data: Uint8Array): SnapshotFrame {
       const available = view.getUint8(offset);
       offset += 1;
       powerups.push({ id, kind, cellX, cellY, available });
+    }
+  }
+
+  // Tolerated trailing extension: a snapshot from before respawns leaves lives at 0.
+  if (offset < data.byteLength) {
+    const livesCount = view.getUint8(offset);
+    offset += 1;
+    for (let i = 0; i < livesCount && i < tanks.length; i++) {
+      tanks[i].lives = view.getUint8(offset + i);
     }
   }
 

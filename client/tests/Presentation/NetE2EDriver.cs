@@ -29,6 +29,9 @@ public partial class NetE2EDriver : Node
     private readonly string? _shotPrefix;
     private readonly string? _map;
     private readonly bool _hostQuits;
+    private readonly bool _rematch;
+    private NetArena3DScene? _firstArena;
+    private double _secondPlaying;
     private readonly Dictionary<string, object> _report = new();
     private readonly Dictionary<byte, System.Numerics.Vector2> _firstSeen = new();
     private readonly Dictionary<byte, float> _farthest = new();
@@ -43,8 +46,9 @@ public partial class NetE2EDriver : Node
     private bool _arrowShot;
     private string? _createdCode;
 
-    private NetE2EDriver(string role, string worker, string codeFile, string outFile, int humans, string? shotPrefix, string? map, bool hostQuits)
+    private NetE2EDriver(string role, string worker, string codeFile, string outFile, int humans, string? shotPrefix, string? map, bool hostQuits, bool rematch)
     {
+        _rematch = rematch;
         _shotPrefix = shotPrefix;
         _map = map;
         _hostQuits = hostQuits;
@@ -79,7 +83,7 @@ public partial class NetE2EDriver : Node
             role, args["--net-e2e-worker"], args["--net-e2e-code-file"], args["--net-e2e-out"],
             int.Parse(args["--net-e2e-humans"], CultureInfo.InvariantCulture),
             args.GetValueOrDefault("--net-e2e-shot"), args.GetValueOrDefault("--net-e2e-map"),
-            args.ContainsKey("--net-e2e-host-quits")) { Name = "NetE2EDriver" };
+            args.ContainsKey("--net-e2e-host-quits"), args.ContainsKey("--net-e2e-rematch")) { Name = "NetE2EDriver" };
         tree.Root.CallDeferred(Node.MethodName.AddChild, driver);
         return true;
     }
@@ -182,6 +186,11 @@ public partial class NetE2EDriver : Node
 
     private void DriveArena(NetArena3DScene arena, double delta)
     {
+        if (_rematch && DriveRematch(arena))
+        {
+            return;
+        }
+
         if (_playing < 0d)
         {
             if (arena.LocalSlot is null || _lobby?.Phase != LobbyPhase.Started)
@@ -241,6 +250,48 @@ public partial class NetE2EDriver : Node
             SaveScreenshot("end");
             Judge(arena);
         }
+    }
+
+    // Play again mode: a few seconds into the first match a guest asks for a rematch (the button's
+    // command; its wiring is a scene test). Every process must then reach a second, running arena.
+    // Returns true while this mode owns the frame.
+    private bool DriveRematch(NetArena3DScene arena)
+    {
+        if (_firstArena is null)
+        {
+            if (_playing >= 4d)
+            {
+                _firstArena = arena;
+                if (_role == "guest")
+                {
+                    NetworkSession.Active?.SendLobby(LobbyProtocol.EncodeRematch());
+                }
+            }
+
+            return false;
+        }
+
+        if (ReferenceEquals(arena, _firstArena))
+        {
+            return true; // waiting for the countdown push to take us back through the room
+        }
+
+        // A new arena: pass once the server says it started and our own tank is alive in it. The
+        // host stays a while longer, since the guests' new match only runs while it simulates.
+        if (_lobby?.Phase == LobbyPhase.Started)
+        {
+            _secondPlaying += GetProcessDeltaTime();
+        }
+
+        if (_secondPlaying >= (_role == "host" ? 6d : 2d) && arena.LocalSlot is byte own
+            && arena.Tanks.TryGetValue(own, out var mine) && mine.Hp > 0)
+        {
+            _report["slot"] = own;
+            _report["tanksSeen"] = arena.Tanks.Count;
+            Finish(true, "rematch reached a running match");
+        }
+
+        return true;
     }
 
     // Windowed runs only (a headless viewport has no pixels): lets a person look at the real HUD.

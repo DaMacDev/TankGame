@@ -22,10 +22,11 @@ public readonly record struct InputFrame(uint Seq, float MoveX, float MoveY, flo
 /// slot (0 = host, 1 = guest) — a stable per-match id the client pairs with its view.
 /// <see cref="Shield"/> is over-shield points (a guest must see a shielded remote tank, ADR-0019
 /// step 4) and <see cref="Layer"/> is the elevation layer the tank stands on (ADR-0018), so a
-/// mirrored tank renders at the right height.</summary>
+/// mirrored tank renders at the right height. <see cref="Lives"/> counts lives left including the
+/// current one: a tank at 0 hp with lives left is waiting to respawn, at 0 lives it is out.</summary>
 public readonly record struct TankState(
     byte Slot, float X, float Y, float Rotation, float TurretRotation, byte Hp, byte Team,
-    byte Shield, byte Layer)
+    byte Shield, byte Layer, byte Lives = 0)
 {
     /// <summary>A tank state with no shield, on the ground layer — the pre-step-4 shape, kept so the
     /// call sites and tests that predate networked shield/elevation stay terse.</summary>

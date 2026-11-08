@@ -54,6 +54,9 @@ public sealed class PredictedTank
     /// <summary>Authoritative hit points from the last reconciled snapshot.</summary>
     public int Hp { get; private set; }
 
+    /// <summary>Authoritative lives left (including the current one) from the last reconciled snapshot.</summary>
+    public int Lives { get; private set; }
+
     /// <summary>Authoritative team from the last reconciled snapshot.</summary>
     public int Team { get; private set; }
 
@@ -90,6 +93,7 @@ public sealed class PredictedTank
         Rotation = authoritative.Rotation;
         TurretRotation = authoritative.TurretRotation;
         Hp = authoritative.Hp;
+        Lives = authoritative.Lives;
         Team = authoritative.Team;
         Shield = authoritative.Shield;
         Layer = authoritative.Layer;
